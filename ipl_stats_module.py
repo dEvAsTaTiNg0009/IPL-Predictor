@@ -22,12 +22,29 @@
 """
 
 import subprocess, sys
-def _pip(*pkgs):
-    for p in pkgs:
-        subprocess.check_call([sys.executable,"-m","pip","install",p,"-q"],
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-_pip("requests","beautifulsoup4","lxml","sqlite3-api")
+def _safe_install_if_missing(pkg, module_name=None):
+    mod = module_name or pkg
+    try:
+        __import__(mod)
+        return True
+    except Exception:
+        pass
+    try:
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", pkg, "-q"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=180,
+        )
+        return True
+    except Exception:
+        return False
 
+_safe_install_if_missing("requests")
+_safe_install_if_missing("beautifulsoup4", "bs4")
+_safe_install_if_missing("lxml")
+
+import csv
 import re, time, json, sqlite3, warnings
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -53,6 +70,7 @@ HEADERS = {
     ),
     "Accept-Language": "en-US,en;q=0.9",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Referer": "https://www.google.com/",
 }
 
 # Format discount: how much to trust non-IPL stats when projecting IPL perf.
@@ -112,11 +130,9 @@ _IPL_TEAM_IDS = {
 _ESPN_SERIES_ID = "1460972"
 
 _HOWSTAT_SLUGS = {
-    "MI": "Mumbai-Indians", "CSK": "Chennai-Super-Kings",
-    "RCB": "Royal-Challengers-Bengaluru", "KKR": "Kolkata-Knight-Riders",
-    "DC": "Delhi-Capitals", "PBKS": "Punjab-Kings",
-    "RR": "Rajasthan-Royals", "SRH": "Sunrisers-Hyderabad",
-    "LSG": "Lucknow-Super-Giants", "GT": "Gujarat-Titans",
+    "MI": "MI", "CSK": "CSK", "RCB": "RCB", "KKR": "KKR",
+    "DC": "DC", "PBKS": "PBKS", "RR": "RR", "SRH": "SRH",
+    "LSG": "LSG", "GT": "GT",
 }
 
 _ROLE_MAP = {
@@ -257,17 +273,100 @@ def _safe_get(url, timeout=10):
     try:
         time.sleep(0.8)
         r = requests.get(url, headers=HEADERS, timeout=timeout)
-        return r.text if r.status_code == 200 else None
+        return r.text if r.status_code == 200 and r.text else None
     except Exception:
         return None
 
 
-def _classify_squad(players, team_abbr):
+def _extract_player_names(blob):
+    """Extract player names from text/json blobs with tolerant patterns."""
+    if not blob:
+        return []
+    names = []
+    patterns = [
+        r'"fullName"\s*:\s*"([^"\\]{3,60})"',
+        r'"playerName"\s*:\s*"([^"\\]{3,60})"',
+        r'"name"\s*:\s*"([^"\\]{3,60})"',
+    ]
+    for pat in patterns:
+        for m in re.findall(pat, blob):
+            n = _canonical_player_name(m)
+            if 3 < len(n) < 50 and re.match(r"^[A-Z][a-zA-Z\s\-\'\.]+$", n):
+                names.append(n)
+    return list(dict.fromkeys(names))
+
+
+_INITIAL_FIXUPS = {
+    "Kl": "KL",
+    "Ms": "MS",
+}
+
+
+def _canonical_player_name(raw):
+    """Normalize player names while preserving common cricket initials."""
+    if raw is None:
+        return ""
+    n = re.sub(r"\s+", " ", str(raw)).strip()
+    if not n:
+        return ""
+    n = n.title()
+    parts = []
+    for token in n.split(" "):
+        parts.append(_INITIAL_FIXUPS.get(token, token))
+    return " ".join(parts)
+
+
+def _clean_player_name(raw):
+    if not raw:
+        return None
+    n = re.sub(r"\s+", " ", str(raw)).strip()
+    if n.lower() in {
+        "batter", "batters", "bowler", "bowlers", "all rounder", "all rounders",
+        "all-rounder", "all-rounders", "wk-batter", "wkbatter", "wicketkeeper",
+        "wicketkeepers", "wicket keeper", "wicket keepers",
+    }:
+        return None
+    n = re.sub(r"\s+(Batter|Bowler|All\s*Rounder|Wicketkeeper|Captain)$", "", n, flags=re.I)
+    n = re.sub(r"\s*(Wk\-Batter|Wk Batter)$", "", n, flags=re.I)
+    n = n.replace("Wicketkeeper Batter", "").replace("Wicketkeeper", "").strip()
+    n = re.sub(r"[^A-Za-z\s\-\'\.]", "", n).strip()
+    if 3 < len(n) < 50 and re.match(r"^[A-Z][a-zA-Z\s\-\'\.]+$", n):
+        return _canonical_player_name(n)
+    return None
+
+
+_NON_PLAYER_TERMS = {
+    "Follow Us", "Official Team Site", "All Rounders", "Batters", "Bowlers", "Wicketkeepers",
+    "Wicket Keepers", "About Us", "Contact Us", "Privacy Policy", "Governing Council",
+    "Image Use Terms", "Anti Corruption Code", "Anti Doping Rules", "Anti Discrimination Code",
+    "News Access Regulations", "Brand And Protection Guidelines", "Match Playing Conditions",
+    "Suspect Action Policy", "Wankhede Stadium", "M Chinnaswamy Stadium", "Mahela Jayawardene",
+    "Batter", "Bowler", "Wk-Batter", "Wicketkeeper",
+}
+
+_TEAM_NAME_TERMS = {
+    "Mumbai Indians", "Chennai Super Kings", "Royal Challengers Bengaluru", "Kolkata Knight Riders",
+    "Delhi Capitals", "Punjab Kings", "Rajasthan Royals", "Sunrisers Hyderabad",
+    "Lucknow Super Giants", "Gujarat Titans",
+}
+
+
+def _classify_squad(players, team_abbr, role_hints=None):
     """Sort flat player list into roles."""
     batters, all_rounders, bowlers, wk = [], [], [], []
+    role_hints = role_hints or {}
     for p in players:
-        name = p.strip().title()
-        if name in _ROLE_MAP["WK-BAT"]:
+        name = _canonical_player_name(p)
+        hinted = role_hints.get(name)
+        if hinted == "WK-BAT":
+            wk.append(name)
+        elif hinted == "ALL":
+            all_rounders.append(name)
+        elif hinted == "BOWL":
+            bowlers.append(name)
+        elif hinted == "BAT":
+            batters.append(name)
+        elif name in _ROLE_MAP["WK-BAT"]:
             wk.append(name)
         elif name in _ROLE_MAP["ALL"]:
             all_rounders.append(name)
@@ -287,26 +386,80 @@ def _classify_squad(players, team_abbr):
     }
 
 
+def _is_plausible_squad(squad):
+    if not squad:
+        return False
+    players = []
+    for k in ["batters", "all_rounders", "bowlers", "wk"]:
+        players.extend(squad.get(k, []))
+    players = list(dict.fromkeys(players))
+    if len(players) < 16 or len(players) > 30:
+        return False
+    for p in players:
+        if p in _TEAM_NAME_TERMS or p in _NON_PLAYER_TERMS:
+            return False
+    return True
+
+
+def _extract_iplt20_sections(soup):
+    """Extract current-season squad by parsing Batters/All Rounders/Bowlers sections."""
+    texts = [re.sub(r"\s+", " ", t).strip() for t in soup.stripped_strings]
+    if not texts:
+        return [], {}
+
+    section_map = {
+        "batters": "BAT",
+        "all rounders": "ALL",
+        "all-rounders": "ALL",
+        "bowlers": "BOWL",
+        "wicketkeepers": "WK-BAT",
+        "wicket keepers": "WK-BAT",
+    }
+    stop_terms = _NON_PLAYER_TERMS | _TEAM_NAME_TERMS
+
+    role_hints = {}
+    players = []
+    cur_role = None
+    started = False
+
+    for raw in texts:
+        norm = raw.lower()
+        if norm in section_map:
+            cur_role = section_map[norm]
+            started = True
+            continue
+        if not started:
+            continue
+
+        if raw in stop_terms:
+            if len(players) >= 16:
+                break
+            continue
+
+        name = _clean_player_name(raw)
+        if not name or name in stop_terms:
+            continue
+        if name in _TEAM_NAME_TERMS:
+            if len(players) >= 16:
+                break
+            continue
+
+        if name not in players:
+            players.append(name)
+        if cur_role:
+            role_hints[name] = cur_role
+
+    # Strict current-season cap: IPL squads are around 25 players.
+    if len(players) > 25:
+        players = players[:25]
+        role_hints = {k: v for k, v in role_hints.items() if k in set(players)}
+    return players, role_hints
+
+
 def _from_iplt20(abbr):
     tid = _IPL_TEAM_IDS.get(abbr)
     if not tid:
         return None
-
-    url = f"https://www.iplt20.com/api/v1/players-list?teamId={tid}"
-    html = _safe_get(url, timeout=8)
-    if html:
-        try:
-            data = json.loads(html)
-            players = []
-            for p in data.get("list", data.get("players", data.get("data", []))):
-                name = p.get("fullName") or p.get("name") or p.get("playerName", "")
-                name = name.strip().title()
-                if 3 < len(name) < 50:
-                    players.append(name)
-            if len(players) >= 14:
-                return _classify_squad(players, abbr)
-        except Exception:
-            pass
 
     slugs = {
         "MI": "mumbai-indians", "CSK": "chennai-super-kings",
@@ -319,17 +472,53 @@ def _from_iplt20(abbr):
     if not slug:
         return None
 
+    api_urls = [
+        f"https://www.iplt20.com/api/v1/players-list?teamId={tid}",
+        f"https://www.iplt20.com/api/v1/players-list?teamId={slug}",
+        f"https://www.iplt20.com/api/v1/players-list?team={slug}",
+    ]
+    for url in api_urls:
+        html = _safe_get(url, timeout=8)
+        if not html:
+            continue
+        try:
+            data = json.loads(html)
+            players = []
+            for p in data.get("list", data.get("players", data.get("data", []))):
+                name = p.get("fullName") or p.get("name") or p.get("playerName", "")
+                name = name.strip().title()
+                if 3 < len(name) < 50:
+                    players.append(name)
+            players = list(dict.fromkeys(players))
+            if len(players) >= 14:
+                return _classify_squad(players, abbr)
+        except Exception:
+            players = _extract_player_names(html)
+            if len(players) >= 14:
+                return _classify_squad(players, abbr)
+
     html = _safe_get(f"https://www.iplt20.com/teams/{slug}/squad", timeout=10)
     if not html:
         return None
     soup = BeautifulSoup(html, "lxml")
-    players = []
-    for el in soup.select("h5.playerName, div.player-name, span.player-name, h4.playerName, li.item span, div.card-title"):
-        n = el.get_text(strip=True).strip()
-        if 3 < len(n) < 50 and re.match(r"^[A-Z][a-zA-Z\s\-\'\.]+$", n):
-            players.append(n)
-    players = list(dict.fromkeys(players))
-    return _classify_squad(players, abbr) if len(players) >= 14 else None
+    players, role_hints = _extract_iplt20_sections(soup)
+    if len(players) >= 16:
+        squad = _classify_squad(players, abbr, role_hints=role_hints)
+        if _is_plausible_squad(squad):
+            return squad
+
+    # Controlled fallback extraction if section parsing misses.
+    fallback_players = []
+    for el in soup.select("a, h3, h4, h5, span, div"):
+        n = _clean_player_name(el.get_text(" ", strip=True))
+        if n and n not in _NON_PLAYER_TERMS and n not in _TEAM_NAME_TERMS:
+            fallback_players.append(n)
+    fallback_players.extend(_extract_player_names(html))
+    fallback_players = [p for p in list(dict.fromkeys(fallback_players)) if p not in _TEAM_NAME_TERMS]
+    if len(fallback_players) > 25:
+        fallback_players = fallback_players[:25]
+    squad = _classify_squad(fallback_players, abbr)
+    return squad if _is_plausible_squad(squad) else None
 
 
 def _from_espncricinfo(abbr):
@@ -355,18 +544,52 @@ def _from_howstat(abbr):
     slug = _HOWSTAT_SLUGS.get(abbr)
     if not slug:
         return None
-    url = f"http://www.howstat.com/cricket/Statistics/IPL/TeamSquad.asp?TeamID={slug}"
+
+    # Current Howstat IPL team records endpoint pattern.
+    url = f"https://www.howstat.com/Cricket/Statistics/IPL/MatchList.asp?s=2026&Team1={slug}"
     html = _safe_get(url, timeout=12)
     if not html:
         return None
     soup = BeautifulSoup(html, "lxml")
     players = []
-    for td in soup.select("table td a"):
-        n = td.get_text(strip=True).strip()
-        if 3 < len(n) < 50 and re.match(r"^[A-Z][a-z]", n):
+    for td in soup.select("table td a, table a"):
+        n = _clean_player_name(td.get_text(" ", strip=True))
+        if n:
             players.append(n)
+
+    # Fallback: extract from Team list page if match list has sparse player links.
+    if len(players) < 12:
+        team_page = _safe_get("https://www.howstat.com/Cricket/Statistics/IPL/TeamList.asp?s=2026", timeout=12)
+        if team_page:
+            players.extend(_extract_player_names(team_page))
+
     players = list(dict.fromkeys(players))
     return _classify_squad(players, abbr) if len(players) >= 12 else None
+
+
+def _squad_players_unique(squad):
+    players = []
+    for k in ["batters", "all_rounders", "bowlers", "wk"]:
+        players.extend(squad.get(k, []))
+    return list(dict.fromkeys(players))
+
+
+def _topup_to_current_season_size(squad, team_abbr, target=25):
+    """Ensure squad size is close to current season roster (~25) using known 2026 list."""
+    live_players = _squad_players_unique(squad)
+    fallback_players = _squad_players_unique(_HARDCODED_SQUADS[team_abbr])
+
+    merged = list(live_players)
+    for p in fallback_players:
+        if p not in merged:
+            merged.append(p)
+        if len(merged) >= target:
+            break
+
+    merged = merged[:target]
+    out = _classify_squad(merged, team_abbr)
+    out["_source"] = f"{squad.get('_source', 'LIVE_SCRAPED')}+TOPUP"
+    return out
 
 
 def scrape_squads(teams, verbose=True):
@@ -387,8 +610,8 @@ def scrape_squads(teams, verbose=True):
 
     for abbr in teams:
         cached, ts = _squad_cache_get(f"squad_{abbr}")
-        if cached and _squad_cache_is_fresh(ts):
-            squads[abbr] = cached
+        if cached and _squad_cache_is_fresh(ts) and _is_plausible_squad(cached):
+            squads[abbr] = _topup_to_current_season_size(cached, abbr, target=25)
             sources["cache"] += 1
             if verbose:
                 print(f"  {abbr:5s} -> cache ({ts[:10]})")
@@ -420,7 +643,8 @@ def scrape_squads(teams, verbose=True):
             except Exception:
                 pass
 
-        if squad and len(squad.get("batters", [])) + len(squad.get("bowlers", [])) >= 8:
+        if squad and _is_plausible_squad(squad):
+            squad = _topup_to_current_season_size(squad, abbr, target=25)
             _squad_cache_set(f"squad_{abbr}", squad)
             squads[abbr] = squad
             sources["live"] += 1
@@ -429,14 +653,14 @@ def scrape_squads(teams, verbose=True):
                 print(f"  {abbr:5s} -> live [{','.join(tried)}] ({count} players)")
             continue
 
-        if cached:
-            squads[abbr] = cached
+        if cached and _is_plausible_squad(cached):
+            squads[abbr] = _topup_to_current_season_size(cached, abbr, target=25)
             sources["stale"] += 1
             if verbose:
                 print(f"  {abbr:5s} -> stale cache (all scrapers failed)")
             continue
 
-        squads[abbr] = _HARDCODED_SQUADS[abbr]
+        squads[abbr] = _topup_to_current_season_size(_HARDCODED_SQUADS[abbr], abbr, target=25)
         sources["hardcoded"] += 1
         if verbose:
             print(f"  {abbr:5s} -> hardcoded fallback")
@@ -451,9 +675,12 @@ def scrape_squads(teams, verbose=True):
 
 def _infer_role(name):
     """Look up known DB first, then use name-pattern heuristics."""
-    # Import global PLAYER_DB_STATIC (defined below) for known roles
-    if name in _STATIC_ROLES:
-        return _STATIC_ROLES[name]
+    canon = _canonical_player_name(name)
+    if canon in _STATIC_ROLES:
+        return _STATIC_ROLES[canon]
+    for known, role in _STATIC_ROLES.items():
+        if _canonical_player_name(known) == canon:
+            return role
     # Known WK suffix patterns
     wk_names = ["Dhoni","Samson","Rahul","Buttler","Kishan","de Kock","Klaasen",
                  "Bairstow","Saha","Salt","Pooran","Conway","Jurel","Rickelton",
@@ -474,15 +701,30 @@ def scrape_player_stats_espn(player_name):
     Returns a dict compatible with PLAYER_DB schema.
     Falls back to T20I → List-A → U19 if IPL data insufficient.
     """
-    cached = _cache.get(f"stats_{player_name}")
+    player_name = _canonical_player_name(player_name)
+    cache_key = f"stats_v2_{player_name}"
+    cached = _cache.get(cache_key)
     if cached:
         return cached
+
+    local_stats = _local_player_stats(player_name)
+    if local_stats:
+        local_stats["role"] = _infer_role(player_name)
+        local_stats["bat_style"] = _infer_bat_style(None, player_name)
+        local_stats["bowl_style"] = _infer_bowl_style(None, player_name, local_stats)
+        local_stats["player_name"] = player_name
+        _cache.set(cache_key, local_stats)
+        return local_stats
 
     # Step 1: Find player page
     player_id, player_url = _find_espn_player(player_name)
     if not player_url:
         result = _bootstrap_from_formats(player_name)
-        _cache.set(f"stats_{player_name}", result)
+        result["role"] = _infer_role(player_name)
+        result["bat_style"] = _infer_bat_style(None, player_name)
+        result["bowl_style"] = _infer_bowl_style(None, player_name, result)
+        result["player_name"] = player_name
+        _cache.set(cache_key, result)
         return result
 
     # Step 2: Scrape IPL stats
@@ -523,7 +765,7 @@ def scrape_player_stats_espn(player_name):
     result["ipl_years"]  = ipl_years
     result["player_name"]= player_name
 
-    _cache.set(f"stats_{player_name}", result)
+    _cache.set(cache_key, result)
     return result
 
 
@@ -852,6 +1094,139 @@ def _bootstrap_from_formats(player_name):
         "bat_sr":  IPL_LEAGUE_AVG["bat_sr"],
         "confidence": "VERY_LOW", "data_source": "PRIOR_ONLY",
     }
+
+
+_LOCAL_IPL_STATS = None
+
+
+def _load_local_ipl_stats():
+    """Build local player batting/bowling stats from cricsheet IPL ball files."""
+    global _LOCAL_IPL_STATS
+    if _LOCAL_IPL_STATS is not None:
+        return _LOCAL_IPL_STATS
+
+    stats = {}
+    ball_files = sorted(Path("ipl_data/cricsheet").glob("*.csv"))
+    ball_files = [p for p in ball_files if not p.name.endswith("_info.csv")]
+    if not ball_files:
+        _LOCAL_IPL_STATS = {}
+        return _LOCAL_IPL_STATS
+
+    for csv_path in ball_files:
+        try:
+            with csv_path.open("r", encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    match_id = (row.get("match_id") or "").strip()
+                    striker = _canonical_player_name(row.get("striker", ""))
+                    bowler = _canonical_player_name(row.get("bowler", ""))
+                    player_dismissed = _canonical_player_name(row.get("player_dismissed", ""))
+                    wicket_type = (row.get("wicket_type") or "").strip().lower()
+
+                    runs_off_bat = int((row.get("runs_off_bat") or "0").strip() or 0)
+                    wides = int((row.get("wides") or "0").strip() or 0)
+                    noballs = int((row.get("noballs") or "0").strip() or 0)
+
+                    if striker:
+                        rec = stats.setdefault(striker, {
+                            "bat_runs": 0, "bat_balls": 0, "bat_innings": set(), "bat_dismissals": 0,
+                            "bowl_runs": 0, "bowl_balls": 0, "bowl_wkts": 0, "bowl_matches": set(),
+                        })
+                        rec["bat_runs"] += runs_off_bat
+                        if wides == 0 and noballs == 0:
+                            rec["bat_balls"] += 1
+                        if match_id:
+                            rec["bat_innings"].add(match_id)
+
+                    if bowler:
+                        rec = stats.setdefault(bowler, {
+                            "bat_runs": 0, "bat_balls": 0, "bat_innings": set(), "bat_dismissals": 0,
+                            "bowl_runs": 0, "bowl_balls": 0, "bowl_wkts": 0, "bowl_matches": set(),
+                        })
+                        rec["bowl_runs"] += runs_off_bat + wides + noballs
+                        if wides == 0 and noballs == 0:
+                            rec["bowl_balls"] += 1
+                        if match_id:
+                            rec["bowl_matches"].add(match_id)
+
+                    if player_dismissed:
+                        rec = stats.setdefault(player_dismissed, {
+                            "bat_runs": 0, "bat_balls": 0, "bat_innings": set(), "bat_dismissals": 0,
+                            "bowl_runs": 0, "bowl_balls": 0, "bowl_wkts": 0, "bowl_matches": set(),
+                        })
+                        if wicket_type not in {"run out", "retired hurt", "retired out", "obstructing the field"}:
+                            rec["bat_dismissals"] += 1
+
+                    if bowler and wicket_type and player_dismissed:
+                        if wicket_type not in {"run out", "retired hurt", "retired out", "obstructing the field"}:
+                            stats[bowler]["bowl_wkts"] += 1
+        except Exception:
+            continue
+
+    _LOCAL_IPL_STATS = stats
+    return _LOCAL_IPL_STATS
+
+
+def _local_player_stats(name):
+    """Return IPL-style player stats from local cricsheet history if available."""
+    canon = _canonical_player_name(name)
+    idx = _load_local_ipl_stats()
+    rec = idx.get(canon)
+    if not rec and canon:
+        parts = [p for p in canon.replace(".", "").split(" ") if p]
+        if len(parts) >= 2:
+            first = parts[0].lower()
+            last = parts[-1].lower()
+            first_initial = first[:1]
+            best = None
+            best_score = -1
+            for k, v in idx.items():
+                kparts = [p for p in k.replace(".", "").split(" ") if p]
+                if len(kparts) < 2:
+                    continue
+                if kparts[-1].lower() != last:
+                    continue
+                kfirst = kparts[0].lower()
+                if not kfirst.startswith(first_initial):
+                    continue
+                innings_score = len(v.get("bat_innings", set())) + len(v.get("bowl_matches", set()))
+                score = innings_score
+                if kfirst == first:
+                    score += 100000
+                if len(kparts) == len(parts):
+                    score += 1000
+                if score > best_score:
+                    best_score = score
+                    best = v
+            rec = best
+    if not rec:
+        return None
+
+    bat_balls = max(int(rec.get("bat_balls", 0)), 0)
+    bat_runs = max(int(rec.get("bat_runs", 0)), 0)
+    bat_dismissals = max(int(rec.get("bat_dismissals", 0)), 0)
+    bowl_balls = max(int(rec.get("bowl_balls", 0)), 0)
+    bowl_runs = max(int(rec.get("bowl_runs", 0)), 0)
+    bowl_wkts = max(int(rec.get("bowl_wkts", 0)), 0)
+    bat_innings = len(rec.get("bat_innings", set()))
+    bowl_matches = len(rec.get("bowl_matches", set()))
+
+    if bat_balls <= 0 and bowl_balls <= 0:
+        return None
+
+    out = {
+        "bat_avg": round(bat_runs / max(bat_dismissals, 1), 2) if bat_runs > 0 else IPL_LEAGUE_AVG["bat_avg"],
+        "bat_sr": round((100.0 * bat_runs / max(bat_balls, 1)), 2) if bat_balls > 0 else IPL_LEAGUE_AVG["bat_sr"],
+        "ipl_matches": max(bat_innings, bowl_matches),
+        "confidence": "MEDIUM" if max(bat_innings, bowl_matches) >= 20 else "LOW",
+        "data_source": "LOCAL_CRICSHEET",
+    }
+    if bowl_balls > 0:
+        out["bowl_eco"] = round((6.0 * bowl_runs / max(bowl_balls, 1)), 2)
+    if bowl_wkts > 0:
+        out["bowl_avg"] = round(bowl_runs / bowl_wkts, 2)
+        out["bowl_wkts"] = bowl_wkts
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────

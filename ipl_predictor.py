@@ -23,29 +23,50 @@
 # 0. AUTO-INSTALL DEPENDENCIES
 # =============================================================================
 # %%
-from ipl_stats_module import build_squads_and_players
+from ipl_stats_module import build_squads_and_players, scrape_squads as live_scrape_squads
 FALLBACK_SQUADS, PLAYER_DB = build_squads_and_players()
 import subprocess, sys
 
-def _pip(*pkgs):
-    for pkg in pkgs:
+def _safe_install_if_missing(pkg, module_name=None):
+    mod = module_name or pkg
+    try:
+        __import__(mod)
+        return True
+    except Exception:
+        pass
+    try:
         subprocess.check_call(
             [sys.executable, "-m", "pip", "install", pkg, "-q"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=180,
         )
+        return True
+    except Exception:
+        return False
 
-print("📦 Installing dependencies (first run may take ~60s)...")
-_pip("pandas", "numpy", "scikit-learn", "xgboost", "lightgbm",
-     "requests", "beautifulsoup4", "lxml", "tqdm", "joblib",
-     "scipy", "tabulate", "colorama")
-print("✅ Done\n")
+print("📦 Checking dependencies...")
+_safe_install_if_missing("pandas")
+_safe_install_if_missing("numpy")
+_safe_install_if_missing("scikit-learn", "sklearn")
+_safe_install_if_missing("xgboost")
+_safe_install_if_missing("lightgbm")
+_safe_install_if_missing("requests")
+_safe_install_if_missing("beautifulsoup4", "bs4")
+_safe_install_if_missing("lxml")
+_safe_install_if_missing("tqdm")
+_safe_install_if_missing("joblib")
+_safe_install_if_missing("scipy")
+_safe_install_if_missing("tabulate")
+_safe_install_if_missing("colorama")
+print("✅ Dependency check complete\n")
 
 # =============================================================================
 # 1. IMPORTS
 # =============================================================================
 # %%
 import warnings; warnings.filterwarnings("ignore")
-import os, re, io, json, time, zipfile, pickle, math
+import os, re, io, json, time, zipfile, pickle, math, csv
 import numpy as np
 import pandas as pd
 import requests
@@ -313,9 +334,6 @@ TEAM_ALIASES = {
     "gujarat titans": "GT", "gt": "GT", "gujarat": "GT",
 }
 
-from ipl_stats_module import build_squads_and_players
-FALLBACK_SQUADS, PLAYER_DB = build_squads_and_players()
-
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPER FUNCTIONS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -387,7 +405,7 @@ class ELOSystem:
     BASE_ELO = 1500
     K_FACTOR = 32
     HOME_ADV = 25
-    DECAY = 0.96
+    DECAY = 0.90
 
     def __init__(self):
         self.ratings = defaultdict(lambda: self.BASE_ELO)
@@ -406,10 +424,12 @@ class ELOSystem:
         ra = self.ratings[team_a]
         rb = self.ratings[team_b]
 
-        home_a = venue and (team_a.lower()[:3] in (venue or "").lower())
-        if home_a:
+        venue_l = (venue or "").lower()
+        team_a_l = str(team_a).lower()
+        team_b_l = str(team_b).lower()
+        if team_a_l and team_a_l in venue_l:
             ra += self.HOME_ADV
-        else:
+        elif team_b_l and team_b_l in venue_l:
             rb += self.HOME_ADV
 
         ea = self.expected(ra, rb)
@@ -421,9 +441,18 @@ class ELOSystem:
     def get(self, team):
         return round(self.ratings.get(team, self.BASE_ELO), 1)
 
-    def build_from_matches(self, info_df):
+    def build_from_matches(self, info_df, recent_years=5):
         if info_df.empty:
             return
+        date_rows = info_df[info_df["key"] == "date"]
+        years = []
+        for dv in date_rows.get("value", pd.Series([], dtype=object)).tolist():
+            try:
+                years.append(int(str(dv)[:4]))
+            except Exception:
+                continue
+        min_year = (max(years) - recent_years + 1) if years else None
+
         match_ids = info_df[info_df["key"] == "winner"]["match_id"].unique()
         for mid in sorted(match_ids):
             mi = info_df[info_df["match_id"] == mid]
@@ -436,6 +465,8 @@ class ELOSystem:
             winner = winner_rows[0]
             t1, t2 = team_rows[0], team_rows[1]
             year = int(date_rows[0][:4]) if len(date_rows) > 0 else None
+            if min_year and year and year < min_year:
+                continue
             venue = venue_rows[0] if len(venue_rows) > 0 else ""
             self.update(t1, t2, winner, venue, year)
 
@@ -653,8 +684,20 @@ class IPLDataFetcher:
         info_dfs = []
         for f in tqdm(info_files, desc="Info"):
             try:
-                df = pd.read_csv(f, header=None, names=["type","key","value"])
-                df["match_id"] = f.stem.replace("_info",""); info_dfs.append(df)
+                rows = []
+                with open(f, "r", encoding="utf-8", newline="") as fh:
+                    reader = csv.reader(fh)
+                    for row in reader:
+                        if len(row) < 3:
+                            continue
+                        rows.append({
+                            "type": row[0],
+                            "key": row[1],
+                            "value": row[2],
+                            "match_id": f.stem.replace("_info", ""),
+                        })
+                if rows:
+                    info_dfs.append(pd.DataFrame(rows))
             except: pass
         print(f"📊 Loading {len(ball_files)} ball-by-ball files…")
         ball_dfs = []
@@ -668,30 +711,9 @@ class IPLDataFetcher:
         return info_df, ball_df
 
     def scrape_squads(self):
-        print("🌐 Fetching current IPL squads…")
-        squads = {}
-        # Try Cricbuzz
-        try:
-            url = "https://www.cricbuzz.com/cricket-series/9237/indian-premier-league-2025/teams"
-            r = requests.get(url, headers=self.HEADERS, timeout=12)
-            soup = BeautifulSoup(r.text, "lxml")
-            for card in soup.select("div.cb-team-squad-players, div[class*='squad']"):
-                players = [a.get_text(strip=True) for a in card.select("a")
-                           if 3 < len(a.get_text(strip=True)) < 45]
-                players = [p for p in players if re.match(r"^[A-Z][a-z]", p)]
-                if players:
-                    hdr = card.find_previous(["h2","h3","h4"])
-                    abbr = _resolve_team(hdr.get_text(strip=True) if hdr else "")
-                    if abbr in TEAMS:
-                        squads[abbr] = {"all_players": players[:22]}
-        except Exception as e:
-            print(f"  Scrape note: {e}")
-        for abbr in TEAMS:
-            if abbr not in squads:
-                squads[abbr] = FALLBACK_SQUADS[abbr]
-        live = sum(1 for v in squads.values() if "all_players" in v)
-        print(f"✅ Squads ready — {live} live scraped, {len(squads)-live} from fallback")
-        return squads
+        # Delegate to the robust multi-source scraper in ipl_stats_module.
+        teams = list(TEAMS.keys())
+        return live_scrape_squads(teams, verbose=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -703,11 +725,28 @@ class WeatherModule:
     BASE = "https://api.open-meteo.com/v1/forecast"
     HIST = "https://archive-api.open-meteo.com/v1/archive"
 
+    def __init__(self):
+        self._warned_live = False
+
     def get(self, venue_name, match_date, match_time_ist="19:30"):
         venue = _find_venue(venue_name)
         if venue is None: return self._default()
         lat, lon = venue["lat"], venue["lon"]
         hour = int(match_time_ist.split(":")[0])
+        req_date = str(match_date).strip().replace("/", "-")
+
+        # Forecast endpoint only serves a near-future horizon. Use historical API otherwise.
+        try:
+            mdate = datetime.strptime(req_date, "%Y-%m-%d").date()
+            today = datetime.today().date()
+            if mdate < today:
+                return self._historical(lat, lon, req_date, hour, venue)
+            # Open-Meteo forecast supports only limited forward range; prevent 400s.
+            if (mdate - today).days > 15:
+                return self._historical(lat, lon, req_date, hour, venue)
+        except Exception:
+            pass
+
         try:
             params = {
                 "latitude": lat, "longitude": lon,
@@ -715,20 +754,34 @@ class WeatherModule:
                           "precipitation,windspeed_10m,winddirection_10m,cloudcover,"
                           "dewpoint_2m,apparent_temperature",
                 "timezone": "Asia/Kolkata",
-                "start_date": match_date, "end_date": match_date,
+                "start_date": req_date, "end_date": req_date,
             }
-            r = requests.get(self.BASE, params=params, timeout=15).json()
-            h = r.get("hourly", {}); idx = min(hour, len(h.get("temperature_2m",[0]))-1)
+            r = requests.get(self.BASE, params=params, timeout=15)
+            r.raise_for_status()
+            payload = r.json()
+            h = payload.get("hourly", {})
+
+            def _pick(keys, default):
+                for k in keys:
+                    arr = h.get(k)
+                    if isinstance(arr, list) and len(arr) > 0:
+                        return arr[min(hour, len(arr) - 1)]
+                return default
+
+            temp_c = _pick(["temperature_2m", "temperature"], None)
+            if temp_c is None:
+                raise KeyError("temperature_2m")
+
             w = {
-                "temp_c":      round(h["temperature_2m"][idx], 1),
-                "humidity":    round(h["relativehumidity_2m"][idx], 1),
-                "rain_prob":   round(h["precipitation_probability"][idx], 1),
-                "precip_mm":   round(h["precipitation"][idx], 2),
-                "wind_kph":    round(h["windspeed_10m"][idx], 1),
-                "wind_dir":    h["winddirection_10m"][idx],
-                "cloud_cover": round(h["cloudcover"][idx], 1),
-                "dewpoint":    round(h["dewpoint_2m"][idx], 1),
-                "feels_like":  round(h["apparent_temperature"][idx], 1),
+                "temp_c":      round(float(temp_c), 1),
+                "humidity":    round(float(_pick(["relativehumidity_2m", "relative_humidity_2m"], 65.0)), 1),
+                "rain_prob":   round(float(_pick(["precipitation_probability"], 15.0)), 1),
+                "precip_mm":   round(float(_pick(["precipitation"], 0.0)), 2),
+                "wind_kph":    round(float(_pick(["windspeed_10m", "wind_speed_10m"], 10.0)), 1),
+                "wind_dir":    float(_pick(["winddirection_10m", "wind_direction_10m"], 180.0)),
+                "cloud_cover": round(float(_pick(["cloudcover", "cloud_cover"], 30.0)), 1),
+                "dewpoint":    round(float(_pick(["dewpoint_2m", "dew_point_2m"], 22.0)), 1),
+                "feels_like":  round(float(_pick(["apparent_temperature", "feels_like"], temp_c)), 1),
                 "is_night":    hour >= 18,
                 "venue_dew_factor": venue.get("dew_factor", 0.5),
             }
@@ -737,8 +790,10 @@ class WeatherModule:
             w["impact"]     = self._impact(w)
             return w
         except Exception as e:
-            print(f"  ⚠️  Weather API: {e} — using historical average")
-            return self._historical(lat, lon, match_date, hour, venue)
+            if not self._warned_live:
+                print(f"  ⚠️  Weather API: {e} — using historical average")
+                self._warned_live = True
+            return self._historical(lat, lon, req_date, hour, venue)
 
     def _dew_risk(self, w, venue):
         if not w["is_night"]: return 0.1
@@ -778,9 +833,13 @@ class WeatherModule:
                     "timezone": "Asia/Kolkata"
                 }, timeout=10).json()
                 h = r.get("hourly", {})
-                if h.get("temperature_2m"):
-                    temps.append(h["temperature_2m"][hour])
-                    hums.append(h["relativehumidity_2m"][hour])
+                t_arr = h.get("temperature_2m") or h.get("temperature")
+                rh_arr = h.get("relativehumidity_2m") or h.get("relative_humidity_2m")
+                if isinstance(t_arr, list) and len(t_arr) > 0:
+                    idx = min(hour, len(t_arr) - 1)
+                    temps.append(t_arr[idx])
+                    if isinstance(rh_arr, list) and len(rh_arr) > idx:
+                        hums.append(rh_arr[idx])
             except: pass
         w = {
             "temp_c":   round(np.mean(temps) if temps else 28, 1),
@@ -921,6 +980,10 @@ class FeatureEngineer:
         f["t2_pitch_aff"] = self._pitch_affinity(sq2, pitch)
         f["pitch_aff_diff"] = f["t1_pitch_aff"] - f["t2_pitch_aff"]
 
+        f["t1_xi_cont"] = self._recent_xi_continuity(t1, sq1)
+        f["t2_xi_cont"] = self._recent_xi_continuity(t2, sq2)
+        f["xi_cont_diff"] = f["t1_xi_cont"] - f["t2_xi_cont"]
+
         f.update(toss_venue_features(0.0, 0.0, venue, self.info_df))
         f.update(bowling_phase_strength(sq1, self.ball_df, pitch))
         f["t1_matchup"] = matchup_score(sq1, sq2)
@@ -997,6 +1060,41 @@ class FeatureEngineer:
         n = max(pace_n + spin_n, 1)
         return round((pace_n * pi + spin_n * si) / n / 10, 3)
 
+    def _recent_xi_continuity(self, team, squad, n_matches=3):
+        """How much of recent playing core is retained in current squad."""
+        if self.ball_df.empty or self.info_df.empty:
+            return 0.5
+        try:
+            tf = TEAMS.get(team, team)
+            mids = self.info_df[self.info_df["value"].str.contains(tf, case=False, na=False)]["match_id"].unique()
+            if len(mids) == 0:
+                return 0.5
+            recent_mids = sorted(mids)[-n_matches:]
+
+            recent_players = set()
+            for mid in recent_mids:
+                md = self.ball_df[self.ball_df["match_id"] == mid]
+                if md.empty:
+                    continue
+                # Approximate playing XI from participants who batted/bowled.
+                bat = md[md.get("batting_team", pd.Series([""] * len(md))).str.contains(tf, case=False, na=False)]
+                bowl = md[md.get("bowling_team", pd.Series([""] * len(md))).str.contains(tf, case=False, na=False)]
+                for c in ["striker", "non_striker"]:
+                    if c in bat.columns:
+                        recent_players.update(str(x) for x in bat[c].dropna().unique())
+                if "bowler" in bowl.columns:
+                    recent_players.update(str(x) for x in bowl["bowler"].dropna().unique())
+
+            if not recent_players:
+                return 0.5
+
+            squad_players = set(_all_players(squad))
+            overlap = len(squad_players & recent_players)
+            denom = max(8, min(15, len(recent_players)))
+            return round(float(np.clip(overlap / denom, 0.0, 1.0)), 3)
+        except Exception:
+            return 0.5
+
     def partnership_synergy(self, p1, p2):
         key = f"ps_{min(p1,p2)}_{max(p1,p2)}"
         if key in self._cache: return self._cache[key]
@@ -1058,6 +1156,7 @@ class ModelTrainer:
         "t1_wins","t2_wins","t1_form_score","t2_form_score","form_diff",
         "h2h_wr","h2h_total",
         "t1_venue_wr","t2_venue_wr","t1_pitch_aff","t2_pitch_aff","pitch_aff_diff",
+        "t1_xi_cont","t2_xi_cont","xi_cont_diff",
         "toss_won","chose_bat","toss_bat_venue","toss_field_venue",
         "pp_bowl_str","death_bowl_str","mid_bowl_str",
         "t1_matchup","t2_matchup","matchup_diff",
@@ -1068,15 +1167,27 @@ class ModelTrainer:
         self.scaler  = StandardScaler()
         self.trained = False
         self.cv_scores = {}
+        self.sample_weights = None
+        self.prob_shrink = 0.85
 
     def prepare_dataset(self, info_df, ball_df, feat_eng, squads):
         """Build training matrix from real match data + synthetic supplement."""
-        rows = []; labels = []
+        rows = []; labels = []; years = []
 
         if not info_df.empty:
             match_ids = info_df[info_df["key"]=="winner"]["match_id"].unique()
             print(f"  Building features for {len(match_ids)} real matches…")
-            for mid in tqdm(match_ids[:800], desc="Features"):
+            max_year = None
+            try:
+                dvals = info_df[info_df["key"]=="date"]["value"].astype(str).str.replace("/", "-", regex=False)
+                yrs = pd.to_datetime(dvals, errors="coerce").dt.year.dropna().astype(int)
+                if len(yrs) > 0:
+                    max_year = int(yrs.max())
+            except Exception:
+                pass
+            min_train_year = (max_year - 7) if max_year else None
+
+            for mid in tqdm(match_ids, desc="Features"):
                 try:
                     mi = info_df[info_df["match_id"]==mid]
                     winner = mi[mi["key"]=="winner"]["value"].values[0]
@@ -1086,7 +1197,10 @@ class ModelTrainer:
                     venue_val = mi[mi["key"]=="venue"]["value"].values
                     venue = venue_val[0] if len(venue_val) else "Wankhede Stadium"
                     date_val  = mi[mi["key"]=="date"]["value"].values
-                    date  = date_val[0] if len(date_val) else "2023-04-01"
+                    date  = str(date_val[0]).replace("/", "-") if len(date_val) else "2023-04-01"
+                    d_year = pd.to_datetime(date, errors="coerce").year
+                    if min_train_year and not pd.isna(d_year) and int(d_year) < int(min_train_year):
+                        continue
                     pitch = PitchPredictor().predict(venue, str(date), WeatherModule()._default())
                     weather = WeatherModule()._default()
                     sq1 = squads.get(t1, FALLBACK_SQUADS.get(t1, FALLBACK_SQUADS["MI"]))
@@ -1095,18 +1209,39 @@ class ModelTrainer:
                     row = [fv.get(k, 0) for k in self.FEATURE_NAMES]
                     tf1 = TEAMS.get(t1, t1); label = 1 if tf1.lower() in winner.lower() else 0
                     rows.append(row); labels.append(label)
+                    years.append(int(d_year) if not pd.isna(d_year) else (max_year or 2023))
                 except: pass
 
-        # Synthetic supplement to ensure ≥1200 samples
-        need = max(0, 1200 - len(rows))
+        # Synthetic supplement only when real data is too low.
+        need = max(0, 450 - len(rows))
         if need > 0:
             print(f"  Generating {need} synthetic training samples…")
             syn_rows, syn_labels = self._synthetic(need)
             rows.extend(syn_rows); labels.extend(syn_labels)
+            base_year = max(years) if years else 2023
+            years.extend([base_year - 1] * len(syn_rows))
 
         X = np.array(rows, dtype=float)
         y = np.array(labels)
         X = np.nan_to_num(X, nan=np.nanmedian(X, axis=0))
+
+        # Recency weighting: newer seasons dominate; synthetic rows get low influence.
+        if len(years) == len(rows) and len(years) > 0:
+            max_year = max(years)
+            w = []
+            real_n = len(rows) - need
+            for i, yr in enumerate(years):
+                age = max(0, max_year - int(yr))
+                wt = math.exp(-0.28 * age)
+                if int(yr) >= max_year - 2:
+                    wt *= 1.25
+                if i >= real_n:
+                    wt *= 0.35
+                w.append(wt)
+            self.sample_weights = np.array(w, dtype=float)
+        else:
+            self.sample_weights = None
+
         print(f"  ✅ Dataset: {len(X)} samples × {X.shape[1]} features")
         return X, y
 
@@ -1120,6 +1255,9 @@ class ModelTrainer:
             h2h_wr    = rng.uniform(0.3, 0.7)
             t1_vwr    = rng.uniform(0.35, 0.65)
             t2_vwr    = rng.uniform(0.35, 0.65)
+            t1_cont   = rng.uniform(0.35, 0.90)
+            t2_cont   = rng.uniform(0.35, 0.90)
+            cont_diff = t1_cont - t2_cont
             dew       = rng.uniform(0.1, 0.9)
             is_night  = float(rng.choice([0, 1]))
             pace_idx  = rng.uniform(4, 9); spin_idx = rng.uniform(3, 9)
@@ -1153,6 +1291,7 @@ class ModelTrainer:
                 t1_vwr, t2_vwr,
                 rng.uniform(0.3,0.7), rng.uniform(0.3,0.7),
                 rng.uniform(-0.3,0.3),
+                t1_cont, t2_cont, cont_diff,
                 toss_won, chose_bat, toss_bat_venue, toss_field_venue,
                 pp_bowl, death_bowl, mid_bowl,
                 t1_matchup, t2_matchup, matchup_diff,
@@ -1160,6 +1299,7 @@ class ModelTrainer:
             p_win = 1/(1+np.exp(-(
                 bat_diff*0.16 + bowl_diff*0.20 + form_diff*0.14 + elo_diff*0.004 +
                 matchup_diff*0.8 + (pp_bowl - death_bowl)*0.03 +
+                cont_diff*0.45 +
                 (h2h_wr-0.5)*2.5 + (t1_vwr-t2_vwr)*2.0 +
                 (dew-0.5)*0.8*(-is_night) + rng.normal(0,0.3)
             )))
@@ -1170,6 +1310,7 @@ class ModelTrainer:
         print("\n🤖 Training ensemble models…")
         tscv = TimeSeriesSplit(n_splits=5)
         Xs = self.scaler.fit_transform(X)
+        sw = self.sample_weights if isinstance(self.sample_weights, np.ndarray) and len(self.sample_weights) == len(X) else None
 
         configs = {
             "XGBoost": xgb.XGBClassifier(
@@ -1192,7 +1333,10 @@ class ModelTrainer:
             oof = np.zeros(len(X))
             for fold, (tr, va) in enumerate(tscv.split(X)):
                 Xtr, Xva = (X[tr], X[va]) if name == "XGBoost" else (Xs[tr], Xs[va])
-                clf.fit(Xtr, y[tr])
+                if sw is not None and name in ["XGBoost", "LightGBM", "ExtraTrees"]:
+                    clf.fit(Xtr, y[tr], sample_weight=sw[tr])
+                else:
+                    clf.fit(Xtr, y[tr])
                 pva  = clf.predict_proba(Xva)[:,1]
                 oof[va] = pva
                 fold_scores.append(accuracy_score(y[va], (pva > 0.5).astype(int)))
@@ -1202,14 +1346,20 @@ class ModelTrainer:
             print(f"  {name:12s} [{bar}] {mean_acc:.1%}")
             # Retrain on all data
             inp = X if name == "XGBoost" else Xs
-            clf.fit(inp, y)
+            if sw is not None and name in ["XGBoost", "LightGBM", "ExtraTrees"]:
+                clf.fit(inp, y, sample_weight=sw)
+            else:
+                clf.fit(inp, y)
             self.models[name] = clf
             oof_preds[:, ci] = oof
 
         # Meta-learner
         print("  Training meta-learner (LogisticRegression)…")
         meta = LogisticRegression(C=1.0, random_state=42)
-        meta.fit(oof_preds, y)
+        if sw is not None:
+            meta.fit(oof_preds, y, sample_weight=sw)
+        else:
+            meta.fit(oof_preds, y)
         self.models["meta"] = meta
 
         # Ensemble CV
@@ -1233,6 +1383,8 @@ class ModelTrainer:
             preds.append(prob); model_probs[name] = round(prob, 4)
         oof_row = np.array([preds])
         final = self.models["meta"].predict_proba(oof_row)[0][1]
+        # Mild confidence shrink to reduce systematic overconfidence bias.
+        final = 0.5 + (final - 0.5) * self.prob_shrink
         std   = np.std(preds)
         confidence = "HIGH" if std < 0.06 else "MEDIUM" if std < 0.12 else "LOW"
         return {
@@ -1256,7 +1408,17 @@ class ModelTrainer:
     def load(self, path=MODELS_DIR/"ipl_ensemble.pkl"):
         data = joblib.load(path)
         self.models = data["models"]; self.scaler = data["scaler"]
-        self.cv_scores = data.get("cv_scores", {}); self.trained = True
+        self.cv_scores = data.get("cv_scores", {})
+
+        # Guard against stale model artifacts after feature-set changes.
+        expected_n = len(self.FEATURE_NAMES)
+        loaded_n = getattr(self.scaler, "n_features_in_", None)
+        if loaded_n is not None and int(loaded_n) != expected_n:
+            raise ValueError(
+                f"Saved model expects {loaded_n} features, current code provides {expected_n}."
+            )
+
+        self.trained = True
         print(f"✅ Models loaded from {path}")
 
 
@@ -1447,6 +1609,8 @@ class MatchAnalyzer:
         self.weather = weather_mod
         self.pitch   = pitch_pred
         self.squads  = squads
+        self.info_df = feat_eng.info_df
+        self.ball_df = feat_eng.ball_df
 
     def analyze(self, team1, team2, venue, match_date=None, match_time="19:30",
                 match_n_at_venue=1):
@@ -1567,6 +1731,27 @@ class MatchAnalyzer:
         ]
         print(tabulate(wrows, tablefmt="plain"))
         print(f"\n  💬 {weather['impact']}\n")
+
+        # Dew impact on teams and players
+        if weather.get("is_night", True):
+            dew = weather.get("dew_risk", 0)
+            print(f"{YELLOW}{'─'*65}")
+            print("  💧  DEW IMPACT (DATE/TIME-SPECIFIC)")
+            print(f"{'─'*65}{RESET}")
+            if dew >= 0.55:
+                hot_bats = sorted(bat1[:4] + bat2[:4], key=lambda x: x.get("runs", 0), reverse=True)[:5]
+                spin_styles = {"OB", "SLA", "LBG", "LBC", "SLO"}
+                spin_hurt = [b for b in (bowl1 + bowl2) if b.get("style") in spin_styles][:5]
+                print(f"  Dew risk {dew:.0%}: likely advantage to batting second/chasing side.")
+                if hot_bats:
+                    print("  Players likely favored by wet ball batting conditions:")
+                    print("   " + ", ".join(p["player"] for p in hot_bats))
+                if spin_hurt:
+                    print("  Players likely hurt (grip-dependent spinners):")
+                    print("   " + ", ".join(p["player"] for p in spin_hurt))
+            else:
+                print(f"  Dew risk {dew:.0%}: low to moderate, no major dew bias expected.")
+            print()
 # %%
         # ── Pitch ─────────────────────────────────────────────────────────────
         print(f"{YELLOW}{'─'*65}")
@@ -1701,7 +1886,7 @@ class ModelEvaluator:
         self.ball_df = ball_df
         self.squads = squads
 
-    def run(self, test_seasons=range(2022, 2026), verbose=True):
+    def run(self, test_seasons=range(2021, 2026), verbose=True):
         if self.info_df.empty:
             print("No Cricsheet data available for backtest.")
             return {}
@@ -1883,7 +2068,7 @@ def setup_system():
     # Data
     fetcher.download_cricsheet()
     info_df, ball_df = fetcher.load_all_matches()
-    squads = fetcher.scrape_squads()
+    squads = FALLBACK_SQUADS
 
     # Feature engineer
     fe = FeatureEngineer(ball_df, info_df)
