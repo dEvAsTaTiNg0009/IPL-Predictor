@@ -116,7 +116,7 @@ IPL_VENUES = {
         "lat": 18.9388, "lon": 72.8253, "capacity": 33108,
         "avg_first_innings": 178, "avg_second_innings": 164,
         "pace_index": 7.2, "spin_index": 4.5,
-        "boundary_freq": 0.68, "chase_win_rate": 0.48,
+        "boundary_freq": 0.68, "chase_win_rate": 0.48,  
         "dew_factor": 0.70,
         "aliases": ["wankhede", "mumbai wankhede", "mi home"]
     },
@@ -690,10 +690,12 @@ class IPLDataFetcher:
                     for row in reader:
                         if len(row) < 3:
                             continue
+                        player_name = row[3] if len(row) > 3 else ""
                         rows.append({
                             "type": row[0],
                             "key": row[1],
                             "value": row[2],
+                            "player": player_name,
                             "match_id": f.stem.replace("_info", ""),
                         })
                 if rows:
@@ -980,10 +982,6 @@ class FeatureEngineer:
         f["t2_pitch_aff"] = self._pitch_affinity(sq2, pitch)
         f["pitch_aff_diff"] = f["t1_pitch_aff"] - f["t2_pitch_aff"]
 
-        f["t1_xi_cont"] = self._recent_xi_continuity(t1, sq1)
-        f["t2_xi_cont"] = self._recent_xi_continuity(t2, sq2)
-        f["xi_cont_diff"] = f["t1_xi_cont"] - f["t2_xi_cont"]
-
         f.update(toss_venue_features(0.0, 0.0, venue, self.info_df))
         f.update(bowling_phase_strength(sq1, self.ball_df, pitch))
         f["t1_matchup"] = matchup_score(sq1, sq2)
@@ -992,28 +990,73 @@ class FeatureEngineer:
         return f
 
     def _bat_strength(self, squad, pitch):
+        """
+        Batting strength = weighted average of actual batting lineup quality.
+        Uses WK-BAT + BAT + ALL roles only (not bowlers).
+        """
+        if "all_players" in squad:
+            players = [p for p in squad["all_players"]
+                       if PLAYER_DB.get(p, {}).get("role") in ["BAT","WK-BAT","ALL"]][:8]
+        else:
+            players = (squad.get("wk", []) + 
+                       squad.get("batters", []) + 
+                       squad.get("all_rounders", []))[:8]
+        
         scores = []
-        for p in _all_players(squad)[:11]:
-            db = PLAYER_DB.get(p, {})
-            avg = db.get("bat_avg", 20.0); sr = db.get("bat_sr", 125.0)
+        for p in players:
+            db  = PLAYER_DB.get(p, {})
+            avg = db.get("bat_avg", 20.0)
+            sr  = db.get("bat_sr",  125.0)
             if avg > 0 and sr > 0:
                 s = avg * 0.55 + sr * 0.14
-                if pitch.get("spin_index", 5) > 7.5 and db.get("bat_style") == "RHB": s *= 0.92
+                # Pitch adjustment: spin pitch hurts RHB
+                if pitch.get("spin_index", 5) > 7.5 and db.get("bat_style") == "RHB":
+                    s *= 0.90
+                # Batting-friendly bonus
+                if pitch.get("batting_friendly"):
+                    s *= 1.05
                 scores.append(s)
-        return round(np.mean(scores) if scores else 28.0, 2)
+        return round(float(np.mean(scores)) if scores else 28.0, 2)
 
     def _bowl_strength(self, squad, pitch):
+        """
+        Bowling strength = quality of actual bowling attack.
+        Uses BOWL + ALL roles only (not pure batters or WK).
+        """
+        if "all_players" in squad:
+            players = [p for p in squad["all_players"]
+                       if PLAYER_DB.get(p, {}).get("bowl_eco") is not None
+                       and PLAYER_DB.get(p, {}).get("bowl_eco", 0) > 0][:7]
+        else:
+            players = (squad.get("bowlers", []) + 
+                       squad.get("all_rounders", []))[:7]
+        
         scores = []
-        for p in _all_players(squad)[:11]:
-            db = PLAYER_DB.get(p, {}); eco = db.get("bowl_eco"); avg = db.get("bowl_avg")
+        pi = pitch.get("pace_index", 5)
+        si = pitch.get("spin_index", 5)
+        
+        for p in players:
+            db    = PLAYER_DB.get(p, {})
+            eco   = db.get("bowl_eco")
+            avg   = db.get("bowl_avg")
             style = db.get("bowl_style", "")
-            if eco and avg:
-                s = (1/eco*7.5) * (32/max(avg, 15)) * 18
-                pi = pitch.get("pace_index", 5); si = pitch.get("spin_index", 5)
-                if style in ["RF","RFM","LFM","LF"] and pi > 6.5: s *= 1.12
-                if style in ["OB","SLA","LBG","LBC","SLO"] and si > 6.5: s *= 1.12
-                scores.append(s)
-        return round(np.mean(scores) if scores else 13.0, 2)
+            if not eco or not avg: continue
+            
+            # Base score: lower eco and avg = stronger bowler
+            s = (7.5 / eco) * (32.0 / max(avg, 15)) * 18
+            
+            # Pitch-style bonus
+            if style in ["RF","RFM","LFM","LF","RMF"] and pi > 6.5:
+                s *= 1.14
+            elif style in ["OB","SLA","LBG","LBC","SLO"] and si > 6.5:
+                s *= 1.14
+            # Penalty for wrong pitch type
+            if style in ["RF","RFM","LFM","LF"] and si > 7.5:
+                s *= 0.88
+            if style in ["OB","SLA","LBG","LBC","SLO"] and pi > 7.5:
+                s *= 0.88
+            scores.append(s)
+        return round(float(np.mean(scores)) if scores else 13.0, 2)
 
     def _form(self, team):
         if self.info_df.empty: return 3
@@ -1059,41 +1102,6 @@ class FeatureEngineer:
         spin_n = sum(1 for p in players if PLAYER_DB.get(p, {}).get("bowl_style","") in ["OB","SLA","LBG","LBC","SLO"])
         n = max(pace_n + spin_n, 1)
         return round((pace_n * pi + spin_n * si) / n / 10, 3)
-
-    def _recent_xi_continuity(self, team, squad, n_matches=3):
-        """How much of recent playing core is retained in current squad."""
-        if self.ball_df.empty or self.info_df.empty:
-            return 0.5
-        try:
-            tf = TEAMS.get(team, team)
-            mids = self.info_df[self.info_df["value"].str.contains(tf, case=False, na=False)]["match_id"].unique()
-            if len(mids) == 0:
-                return 0.5
-            recent_mids = sorted(mids)[-n_matches:]
-
-            recent_players = set()
-            for mid in recent_mids:
-                md = self.ball_df[self.ball_df["match_id"] == mid]
-                if md.empty:
-                    continue
-                # Approximate playing XI from participants who batted/bowled.
-                bat = md[md.get("batting_team", pd.Series([""] * len(md))).str.contains(tf, case=False, na=False)]
-                bowl = md[md.get("bowling_team", pd.Series([""] * len(md))).str.contains(tf, case=False, na=False)]
-                for c in ["striker", "non_striker"]:
-                    if c in bat.columns:
-                        recent_players.update(str(x) for x in bat[c].dropna().unique())
-                if "bowler" in bowl.columns:
-                    recent_players.update(str(x) for x in bowl["bowler"].dropna().unique())
-
-            if not recent_players:
-                return 0.5
-
-            squad_players = set(_all_players(squad))
-            overlap = len(squad_players & recent_players)
-            denom = max(8, min(15, len(recent_players)))
-            return round(float(np.clip(overlap / denom, 0.0, 1.0)), 3)
-        except Exception:
-            return 0.5
 
     def partnership_synergy(self, p1, p2):
         key = f"ps_{min(p1,p2)}_{max(p1,p2)}"
@@ -1156,7 +1164,6 @@ class ModelTrainer:
         "t1_wins","t2_wins","t1_form_score","t2_form_score","form_diff",
         "h2h_wr","h2h_total",
         "t1_venue_wr","t2_venue_wr","t1_pitch_aff","t2_pitch_aff","pitch_aff_diff",
-        "t1_xi_cont","t2_xi_cont","xi_cont_diff",
         "toss_won","chose_bat","toss_bat_venue","toss_field_venue",
         "pp_bowl_str","death_bowl_str","mid_bowl_str",
         "t1_matchup","t2_matchup","matchup_diff",
@@ -1255,9 +1262,6 @@ class ModelTrainer:
             h2h_wr    = rng.uniform(0.3, 0.7)
             t1_vwr    = rng.uniform(0.35, 0.65)
             t2_vwr    = rng.uniform(0.35, 0.65)
-            t1_cont   = rng.uniform(0.35, 0.90)
-            t2_cont   = rng.uniform(0.35, 0.90)
-            cont_diff = t1_cont - t2_cont
             dew       = rng.uniform(0.1, 0.9)
             is_night  = float(rng.choice([0, 1]))
             pace_idx  = rng.uniform(4, 9); spin_idx = rng.uniform(3, 9)
@@ -1291,7 +1295,6 @@ class ModelTrainer:
                 t1_vwr, t2_vwr,
                 rng.uniform(0.3,0.7), rng.uniform(0.3,0.7),
                 rng.uniform(-0.3,0.3),
-                t1_cont, t2_cont, cont_diff,
                 toss_won, chose_bat, toss_bat_venue, toss_field_venue,
                 pp_bowl, death_bowl, mid_bowl,
                 t1_matchup, t2_matchup, matchup_diff,
@@ -1299,7 +1302,6 @@ class ModelTrainer:
             p_win = 1/(1+np.exp(-(
                 bat_diff*0.16 + bowl_diff*0.20 + form_diff*0.14 + elo_diff*0.004 +
                 matchup_diff*0.8 + (pp_bowl - death_bowl)*0.03 +
-                cont_diff*0.45 +
                 (h2h_wr-0.5)*2.5 + (t1_vwr-t2_vwr)*2.0 +
                 (dew-0.5)*0.8*(-is_night) + rng.normal(0,0.3)
             )))
@@ -1386,13 +1388,15 @@ class ModelTrainer:
         # Mild confidence shrink to reduce systematic overconfidence bias.
         final = 0.5 + (final - 0.5) * self.prob_shrink
         std   = np.std(preds)
-        confidence = "HIGH" if std < 0.06 else "MEDIUM" if std < 0.12 else "LOW"
+        confidence_pct = float(np.clip(0.80 + (0.10 - std) * 0.20, 0.76, 0.86))
+        confidence = "HIGH" if confidence_pct >= 0.84 else "MEDIUM" if confidence_pct >= 0.79 else "LOW"
         return {
             "win_prob_t1":  round(final, 4),
             "win_prob_t2":  round(1 - final, 4),
             "model_probs":  model_probs,
             "std_dev":      round(std, 4),
             "confidence":   confidence,
+            "confidence_pct": round(confidence_pct, 4),
         }
 
     def feature_importance(self):
@@ -1430,9 +1434,142 @@ class PlayerProjector:
     def __init__(self, feat_eng: FeatureEngineer):
         self.fe = feat_eng
 
-    def project_batting(self, squad, venue, pitch, weather, opposition_squad):
+    def _season_sort_key(self, season_value):
+        text = str(season_value).strip()
+        match = re.search(r"(\d{4})", text)
+        if not match:
+            return (-1, text)
+        start_year = int(match.group(1))
+        tail_match = re.search(r"/(\d{2,4})", text)
+        if tail_match:
+            tail = tail_match.group(1)
+            if len(tail) == 2:
+                return (int(f"{start_year // 100}{tail}"), text)
+            return (int(tail), text)
+        return (start_year, text)
+
+    def _latest_season(self):
+        if self.fe.info_df.empty or "key" not in self.fe.info_df.columns:
+            return None
+        seasons = (
+            self.fe.info_df[self.fe.info_df["key"] == "season"]["value"]
+            .dropna().astype(str).unique().tolist()
+        )
+        if not seasons:
+            return None
+        return max(seasons, key=self._season_sort_key)
+
+    def _parse_date(self, value):
+        text = str(value).strip()
+        for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
+            try:
+                return datetime.strptime(text, fmt)
+            except Exception:
+                continue
+        return datetime.min
+
+    def _team_match(self, value, team):
+        return _resolve_team(str(value)) == team
+
+    def _season_match_ids(self, team, season=None):
+        if self.fe.info_df.empty:
+            return []
+        season = season or self._latest_season()
+        if not season:
+            return []
+
+        season_rows = self.fe.info_df[
+            (self.fe.info_df["key"] == "season") &
+            (self.fe.info_df["value"].astype(str) == str(season))
+        ]
+        season_match_ids = season_rows["match_id"].unique().tolist()
+        matches = []
+        for mid in season_match_ids:
+            mi = self.fe.info_df[self.fe.info_df["match_id"] == mid]
+            team_rows = mi[mi["key"] == "team"]["value"].astype(str).tolist()
+            if not any(self._team_match(v, team) for v in team_rows):
+                continue
+            date_rows = mi[mi["key"] == "date"]["value"].astype(str).tolist()
+            matches.append((self._parse_date(date_rows[0]) if date_rows else datetime.min, mid))
+        matches.sort(key=lambda item: (item[0], str(item[1])))
+        return [mid for _, mid in matches]
+
+    def _team_season_xi(self, team, squad):
+        match_ids = self._season_match_ids(team)
+        if not match_ids:
+            return []
+
+        for mid in reversed(match_ids):
+            mi = self.fe.info_df[self.fe.info_df["match_id"] == mid]
+            player_rows = mi[
+                (mi["key"] == "player") &
+                (mi["value"].astype(str).apply(lambda v: self._team_match(v, team)))
+            ]
+            xi = []
+            for _, row in player_rows.iterrows():
+                player = str(row.get("player", "")).strip()
+                if player and player not in xi:
+                    xi.append(player)
+            if len(xi) >= 11:
+                return xi[:11]
+
+        return []
+
+    def _order_xi_for_batting(self, xi):
+        role_rank = {"WK-BAT": 0, "BAT": 1, "ALL": 2, "BOWL": 3}
+
+        def sort_key(player):
+            db = PLAYER_DB.get(player, {})
+            role = db.get("role", "")
+            return (
+                role_rank.get(role, 4),
+                -float(db.get("bat_avg") or 0.0),
+                -float(db.get("bat_sr") or 0.0),
+                player,
+            )
+
+        return sorted(list(dict.fromkeys(xi)), key=sort_key)
+
+    def preview_team_selection(self, team, squad):
+        roster = _all_players(squad)
+        season_xi = self._team_season_xi(team, squad)
+        if not season_xi:
+            season_xi = self._probable_xi(squad, team=team)
+        bench = [p for p in roster if p not in season_xi]
+        return season_xi, bench, roster
+
+    def apply_replacements(self, base_xi, roster, replacements):
+        final_xi = list(base_xi)
+        roster_set = set(roster)
+        for out_player, in_player in replacements:
+            out_player = out_player.strip()
+            in_player = in_player.strip()
+            if not out_player or not in_player:
+                continue
+            if out_player not in final_xi:
+                continue
+            if in_player not in roster_set or in_player in final_xi:
+                continue
+            idx = final_xi.index(out_player)
+            final_xi[idx] = in_player
+
+        deduped = []
+        seen = set()
+        for player in final_xi:
+            if player not in seen:
+                seen.add(player)
+                deduped.append(player)
+        for player in roster:
+            if len(deduped) >= 11:
+                break
+            if player not in seen:
+                seen.add(player)
+                deduped.append(player)
+        return deduped[:11]
+
+    def project_batting(self, squad, venue, pitch, weather, opposition_squad, team=None, playing_xi=None):
         """Project batting scores for all 11 players independently."""
-        players = self._probable_xi(squad)
+        players = list(playing_xi) if playing_xi else self._probable_xi(squad, team=team)
         results = []
 
         for pos, player in enumerate(players, 1):
@@ -1541,58 +1678,174 @@ class PlayerProjector:
             "proj_avg": round(base_avg * 0.55, 1),
         }
 
-    def project_bowling(self, squad, venue, pitch, weather):
-        """Project bowling figures for key bowlers."""
-        players = _all_players(squad)
+    def project_bowling(self, squad, venue, pitch, weather, team=None, playing_xi=None):
+        """
+        Project bowling figures only for players who actually bowl.
+        Correctly separates: pure bowlers + bowling all-rounders.
+        Pure batters and WK-batters are excluded from bowling projections.
+        """
+        xi = list(playing_xi) if playing_xi else self._probable_xi(squad, team=team)
+
+        # Get ONLY players who bowl — from structured squad keys
+        if "all_players" in squad:
+            # Flat list: filter by PLAYER_DB bowl_eco
+            bowlers_xi = [p for p in squad["all_players"]
+                          if PLAYER_DB.get(p, {}).get("bowl_eco") is not None
+                          and PLAYER_DB.get(p, {}).get("bowl_eco", 0) > 0]
+        else:
+            # Structured: bowlers + all-rounders who have bowl stats
+            bowlers_xi = squad.get("bowlers", [])
+            bowling_allrounders = [
+                p for p in squad.get("all_rounders", [])
+                if PLAYER_DB.get(p, {}).get("bowl_eco") is not None
+            ]
+            bowlers_xi = bowlers_xi + bowling_allrounders
+
+        # Ensure we only project the 11 players actually in the XI
+        bowlers_xi = [p for p in bowlers_xi if p in xi]
+
         results = []
-        for player in players:
-            db = PLAYER_DB.get(player, {})
-            eco = db.get("bowl_eco"); avg = db.get("bowl_avg"); style = db.get("bowl_style","")
-            if not eco or not avg: continue
-            # Max overs allocation (simplified)
+        for player in bowlers_xi:
+            db    = PLAYER_DB.get(player, {})
+            eco   = db.get("bowl_eco")
+            avg   = db.get("bowl_avg")
+            style = db.get("bowl_style", "")
+
+            if not eco or not avg:
+                continue
+
+            # Overs allocation: pace get more in PP+death, spinners in middle
+            pi = pitch.get("pace_index", 5)
+            si = pitch.get("spin_index", 5)
+            is_pace = style in ["RF","RFM","LFM","LF","RMF"]
+            is_spin = style in ["OB","SLA","LBG","LBC","SLO"]
+
+            # Base 4 overs; key bowlers bowl their full quota
             max_ov = 4.0
-            # Pitch-style modifier
-            pi = pitch.get("pace_index", 5); si = pitch.get("spin_index", 5)
+
+            # Economy modifier based on pitch type
             eco_mod = 1.0; wkt_mod = 1.0
-            if style in ["RF","RFM","LFM","LF"]:
-                if pi > 6.5: eco_mod = 0.92; wkt_mod = 1.15
-                elif si > 7: eco_mod = 1.10; wkt_mod = 0.82
-            elif style in ["OB","SLA","LBG","LBC","SLO"]:
-                if si > 6.5: eco_mod = 0.90; wkt_mod = 1.18
-                elif pi > 7: eco_mod = 1.08; wkt_mod = 0.78
-            # Dew hurts spinners 2nd innings
-            if weather.get("dew_risk", 0) > 0.6 and style in ["OB","SLA","LBG","LBC","SLO"]:
-                eco_mod *= 1.12; wkt_mod *= 0.85
-            proj_eco = round(eco * eco_mod + np.random.normal(0, 0.3), 2)
-            proj_eco = max(5.0, min(14.0, proj_eco))
-            wkt_rate = max_ov / max(avg * wkt_mod / 6, 6)
-            proj_wkts = round(float(np.random.poisson(max(0.1, wkt_rate))), 0)
-            proj_wkts = min(4, int(proj_wkts))
+            if is_pace:
+                if pi > 6.5: eco_mod = 0.91; wkt_mod = 1.18   # pace pitch = good for pacers
+                elif si > 7:  eco_mod = 1.12; wkt_mod = 0.78   # spin pitch = pacers struggle
+            elif is_spin:
+                if si > 6.5: eco_mod = 0.89; wkt_mod = 1.20   # spin pitch = good for spinners
+                elif pi > 7: eco_mod = 1.10; wkt_mod = 0.75   # pace pitch = spinners struggle
+                # Dew kills spinners in 2nd innings
+                if weather.get("dew_risk", 0) > 0.6:
+                    eco_mod *= 1.14; wkt_mod *= 0.82
+
+            proj_eco  = round(float(eco * eco_mod + np.random.normal(0, 0.35)), 2)
+            proj_eco  = max(5.5, min(14.0, proj_eco))
+            wkt_rate  = max_ov / max(avg * wkt_mod / 6.0, 5.0)
+            proj_wkts = int(min(4, np.random.poisson(max(0.05, wkt_rate))))
             proj_runs = round(proj_eco * max_ov)
-            suited = ((style in ["RF","RFM","LFM","LF"] and pi > 6.5) or
-                      (style in ["OB","SLA","LBG","LBC","SLO"] and si > 6.5))
+
+            suited = ((is_pace and pi > 6.5) or (is_spin and si > 6.5))
+
             results.append({
-                "player": player, "style": style or "—",
-                "overs": max_ov, "wickets": proj_wkts,
-                "runs": proj_runs, "economy": proj_eco,
+                "player":          player,
+                "style":           style or "—",
+                "overs":           max_ov,
+                "wickets":         proj_wkts,
+                "runs":            proj_runs,
+                "economy":         proj_eco,
                 "suited_to_pitch": suited,
             })
         results.sort(key=lambda x: (-x["wickets"], x["economy"]))
         return results[:6]
 
-    def _probable_xi(self, squad):
-        """Build a probable playing XI from the squad."""
-        players = _all_players(squad)
-        if len(players) <= 11: return players[:11]
-        # Priority: WK > top-order BAT > ALL > BOWL
-        wks   = [p for p in players if PLAYER_DB.get(p,{}).get("role","")=="WK-BAT"][:2]
-        bats  = [p for p in players if PLAYER_DB.get(p,{}).get("role","")=="BAT" and p not in wks][:5]
-        alls  = [p for p in players if PLAYER_DB.get(p,{}).get("role","")=="ALL" and p not in wks+bats][:3]
-        bowls = [p for p in players if PLAYER_DB.get(p,{}).get("role","")=="BOWL" and p not in wks+bats+alls]
-        xi = (wks + bats + alls + bowls)[:11]
-        # Top up with remaining if needed
-        rem = [p for p in players if p not in xi]
-        xi += rem[:max(0, 11 - len(xi))]
+    def _probable_xi(self, squad, team=None):
+        """
+        Build a realistic IPL playing XI following actual selection logic:
+        1 WK + 4-5 batters + 3-4 all-rounders + 3-4 bowlers = 11
+
+        Handles both structured squads (with role keys) and flat scraped lists.
+        """
+        if team:
+            season_xi = self._team_season_xi(team, squad)
+            if season_xi:
+                return self._order_xi_for_batting(season_xi)
+
+        # ── Extract players by role ───────────────────────────────────────────
+        if "all_players" in squad:
+            # Flat scraped list — classify each player by PLAYER_DB role
+            flat = squad["all_players"]
+            wk_pool  = [p for p in flat if PLAYER_DB.get(p, {}).get("role") == "WK-BAT"]
+            bat_pool = [p for p in flat if PLAYER_DB.get(p, {}).get("role") == "BAT"]
+            all_pool = [p for p in flat if PLAYER_DB.get(p, {}).get("role") == "ALL"]
+            bowl_pool= [p for p in flat if PLAYER_DB.get(p, {}).get("role") == "BOWL"]
+            # Unknown role → classify by squad position (first 8 = batters, rest = bowlers)
+            unknown  = [p for p in flat if not PLAYER_DB.get(p, {}).get("role")]
+            bat_pool += unknown[:4]
+            bowl_pool+= unknown[4:]
+        else:
+            # Structured squad dict — use the role keys directly
+            wk_pool  = squad.get("wk", [])
+            bat_pool = squad.get("batters", [])
+            all_pool = squad.get("all_rounders", [])
+            bowl_pool= squad.get("bowlers", [])
+
+        # ── Deduplicate across pools (WK can also be in batters list) ─────────
+        seen = set()
+        def _dedup(lst):
+            result = []
+            for p in lst:
+                if p not in seen:
+                    seen.add(p); result.append(p)
+            return result
+
+        wk_pool   = _dedup(wk_pool)
+        bat_pool  = _dedup(bat_pool)
+        all_pool  = _dedup(all_pool)
+        bowl_pool = _dedup(bowl_pool)
+
+        xi = []
+
+        # ── Step 1: Pick 1 wicketkeeper (mandatory) ───────────────────────────
+        if wk_pool:
+            xi.append(wk_pool[0])          # Primary WK
+            # Add backup WK only if squad has a clear second option
+            if len(wk_pool) >= 2:
+                # Only pick 2nd WK if fewer than 2 WKs already and squad is large
+                pass   # Most modern IPL teams play 1 WK
+
+        # ── Step 2: Pick specialist batters (target: 4 total incl. WK) ───────
+        remaining_bat_slots = 4 - len([p for p in xi if PLAYER_DB.get(p,{}).get("role")=="WK-BAT"])
+        for p in bat_pool:
+            if len(xi) >= 5: break
+            if p not in xi:
+                xi.append(p)
+
+        # ── Step 3: Pick all-rounders (target: 3-4) ───────────────────────────
+        for p in all_pool:
+            if len(xi) >= 8: break
+            if p not in xi:
+                xi.append(p)
+
+        # ── Step 4: Pick specialist bowlers (target: 3-4) ─────────────────────
+        for p in bowl_pool:
+            if len(xi) >= 11: break
+            if p not in xi:
+                xi.append(p)
+
+        # ── Step 5: Fill remaining spots if XI not complete ───────────────────
+        all_available = wk_pool + bat_pool + all_pool + bowl_pool
+        for p in all_available:
+            if len(xi) >= 11: break
+            if p not in xi:
+                xi.append(p)
+
+        # ── Validation: must have at least 3 bowling options ──────────────────
+        bowl_count = sum(1 for p in xi if PLAYER_DB.get(p,{}).get("role") in ["BOWL","ALL"])
+        if bowl_count < 3:
+            # Add more all-rounders or bowlers from pool
+            for p in all_pool + bowl_pool:
+                if p not in xi:
+                    xi.append(p)
+                    bowl_count += 1
+                    if bowl_count >= 3: break
+
         return xi[:11]
 
 
@@ -1613,7 +1866,7 @@ class MatchAnalyzer:
         self.ball_df = feat_eng.ball_df
 
     def analyze(self, team1, team2, venue, match_date=None, match_time="19:30",
-                match_n_at_venue=1):
+                match_n_at_venue=1, playing_xis=None):
         t1 = _resolve_team(team1); t2 = _resolve_team(team2)
         if match_date is None:
             match_date = datetime.today().strftime("%Y-%m-%d")
@@ -1628,10 +1881,14 @@ class MatchAnalyzer:
         sq2     = self.squads.get(t2, FALLBACK_SQUADS.get(t2, FALLBACK_SQUADS["CSK"]))
         features = self.fe.build(t1, t2, venue, weather, pitch, {t1: sq1, t2: sq2})
         pred    = self.model.predict(features)
-        bat1    = self.proj.project_batting(sq1, venue, pitch, weather, sq2)
-        bat2    = self.proj.project_batting(sq2, venue, pitch, weather, sq1)
-        bowl1   = self.proj.project_bowling(sq1, venue, pitch, weather)
-        bowl2   = self.proj.project_bowling(sq2, venue, pitch, weather)
+        playing_xis = playing_xis or {}
+        bat1    = self.proj.project_batting(sq1, venue, pitch, weather, sq2, team=t1, playing_xi=playing_xis.get(t1))
+        weather_inn2 = {**weather, "is_batting_second": True}
+        bat2    = self.proj.project_batting(sq2, venue, pitch, weather_inn2, sq1, team=t2, playing_xi=playing_xis.get(t2))
+        print(f"\n  {TEAMS.get(t1,t1)} XI: {', '.join(p['player'] for p in bat1)}")
+        print(f"  {TEAMS.get(t2,t2)} XI: {', '.join(p['player'] for p in bat2)}\n")
+        bowl1   = self.proj.project_bowling(sq1, venue, pitch, weather, team=t1, playing_xi=playing_xis.get(t1))
+        bowl2   = self.proj.project_bowling(sq2, venue, pitch, weather, team=t2, playing_xi=playing_xis.get(t2))
         self._last_weather = weather
         score1  = self._team_score(bat1, pitch, features=features, innings=1)
         score2  = self._team_score(bat2, pitch, features=features, innings=2)
@@ -1776,7 +2033,7 @@ class MatchAnalyzer:
         b1 = int(p1 * bar_len); b2 = bar_len - b1
         print(f"  {t1n[:22]:22s} {'█'*b1}{'░'*b2} {p1:.1%}")
         print(f"  {t2n[:22]:22s} {'░'*b1}{'█'*b2} {p2:.1%}")
-        print(f"\n  Model confidence: {pred['confidence']}  (σ={pred['std_dev']:.3f})")
+        print(f"\n  Model confidence: {pred['confidence_pct']:.0%}  ({pred['confidence']}, σ={pred['std_dev']:.3f})")
         print(f"\n  Individual models:")
         for name, prob in pred["model_probs"].items():
             print(f"    {name:12s} → {TEAMS.get(t1,t1)} {prob:.1%}  /  {TEAMS.get(t2,t2)} {1-prob:.1%}")
@@ -2151,7 +2408,40 @@ def interactive(analyzer):
                 mnum  = input("  Match # at this venue this season [1]: ").strip()
                 mnum  = int(mnum) if mnum.isdigit() else 1
 
-                analyzer.analyze(t1_in, t2_in, ven, date, mtime, mnum)
+                t1 = _resolve_team(t1_in)
+                t2 = _resolve_team(t2_in)
+                sq1 = analyzer.squads.get(t1, FALLBACK_SQUADS.get(t1, FALLBACK_SQUADS["MI"]))
+                sq2 = analyzer.squads.get(t2, FALLBACK_SQUADS.get(t2, FALLBACK_SQUADS["CSK"]))
+
+                xi_overrides = {}
+                for team, squad in ((t1, sq1), (t2, sq2)):
+                    current_xi, bench, roster = analyzer.proj.preview_team_selection(team, squad)
+                    print(f"\n  {TEAMS.get(team, team)} current season XI:")
+                    print(f"    {', '.join(current_xi)}")
+                    print(f"  {TEAMS.get(team, team)} other players:")
+                    print(f"    {', '.join(bench) if bench else 'None'}")
+                    replacements = input(
+                        f"  Replace any {TEAMS.get(team, team)} players? Use out=in pairs, comma-separated, or Enter to keep XI: "
+                    ).strip()
+                    if replacements:
+                        parsed = []
+                        for chunk in replacements.split(","):
+                            chunk = chunk.strip()
+                            if not chunk:
+                                continue
+                            if "=" in chunk:
+                                out_player, in_player = chunk.split("=", 1)
+                            elif ":" in chunk:
+                                out_player, in_player = chunk.split(":", 1)
+                            else:
+                                raise ValueError(f"Invalid replacement '{chunk}'. Use out=in.")
+                            parsed.append((out_player.strip(), in_player.strip()))
+                        current_xi = analyzer.proj.apply_replacements(current_xi, roster, parsed)
+                        print(f"  Updated XI for {TEAMS.get(team, team)}:")
+                        print(f"    {', '.join(current_xi)}")
+                    xi_overrides[team] = current_xi
+
+                analyzer.analyze(t1_in, t2_in, ven, date, mtime, mnum, playing_xis=xi_overrides)
 
             except KeyboardInterrupt:
                 print("\n  (Cancelled)")

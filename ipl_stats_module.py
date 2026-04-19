@@ -60,7 +60,7 @@ CACHE_DB   = Path("ipl_data/player_cache.db")
 CACHE_DB.parent.mkdir(exist_ok=True)
 CACHE_TTL  = 24        # hours before re-scraping
 MAX_RETRY  = 3
-DELAY      = 1.2       # seconds between requests (be polite)
+DELAY      = .5       # seconds between requests (be polite)
 
 HEADERS = {
     "User-Agent": (
@@ -454,7 +454,6 @@ def _extract_iplt20_sections(soup):
         players = players[:25]
         role_hints = {k: v for k, v in role_hints.items() if k in set(players)}
     return players, role_hints
-
 
 def _from_iplt20(abbr):
     tid = _IPL_TEAM_IDS.get(abbr)
