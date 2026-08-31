@@ -925,504 +925,268 @@ class PitchPredictor:
 # %%
 
 class FeatureEngineer:
-    def __init__(self, ball_df, info_df):
-        self.ball_df = ball_df
-        self.info_df = info_df
-        self._cache  = {}
-        self.elo = ELOSystem()
-        if not info_df.empty:
-            self.elo.build_from_matches(info_df)
+    def __init__(self, ball_df=None, info_df=None):
+        self.ball_df = ball_df if ball_df is not None else pd.DataFrame()
+        self.info_df = info_df if info_df is not None else pd.DataFrame()
+        from ipl_temporal import ChronologicalDataLoader, HistoricalStateTracker, TemporalFeatureEngine, normalize_team, normalize_venue, MatchRecord
+        self.loader = ChronologicalDataLoader()
+        self.temporal_engine = TemporalFeatureEngine(mode="pre_xi")
+        self.state = HistoricalStateTracker()
+        self._load_and_replay_history()
 
-    def build(self, t1, t2, venue, weather, pitch, squads):
-        f = {}
+    def _load_and_replay_history(self):
+        matches = self.loader.load_all_matches()
+        for m in matches:
+            self.state.update_match_result(m)
+
+    def build(self, t1, t2, venue, weather, pitch, squads, match_date=None):
+        from ipl_temporal import normalize_team, normalize_venue, MatchRecord
+        t1_norm = normalize_team(t1)
+        t2_norm = normalize_team(t2)
+        v_norm = normalize_venue(venue)
+
+        if match_date is None:
+            m_date = datetime.today().date()
+        elif isinstance(match_date, str):
+            try:
+                m_date = datetime.strptime(match_date.replace("/", "-"), "%Y-%m-%d").date()
+            except Exception:
+                m_date = datetime.today().date()
+        else:
+            m_date = match_date
+
+        from datetime import time as dt_time
+        m_datetime = datetime.combine(m_date, dt_time(19, 30))
+
+        dummy_match = MatchRecord(
+            match_id="LIVE_PRED",
+            season="2026",
+            match_date=m_date,
+            match_datetime=m_datetime,
+            match_number=1,
+            team1=t1_norm,
+            team2=t2_norm,
+            team1_raw=t1,
+            team2_raw=t2,
+            venue=v_norm,
+            venue_raw=venue,
+            city=v_norm.split(",")[-1].strip() if "," in v_norm else "",
+            toss_winner=t1_norm,
+            toss_decision="field",
+            winner=None,
+            winner_raw="",
+            margin_runs=0,
+            margin_wickets=0,
+            playing_xi={
+                t1_norm: squads.get(t1_norm, {}).get("all_players", []),
+                t2_norm: squads.get(t2_norm, {}).get("all_players", [])
+            },
+        )
+
+        feats = self.temporal_engine.build_features(dummy_match, self.state)
+
         v = _find_venue(venue) or {}
-        f["venue_avg_first"]     = v.get("avg_first_innings", 168)
-        f["venue_pace_index"]    = v.get("pace_index", 6.0)
-        f["venue_spin_index"]    = v.get("spin_index", 6.0)
-        f["venue_boundary_freq"] = v.get("boundary_freq", 0.62)
-        f["venue_chase_wr"]      = v.get("chase_win_rate", 0.50)
-        f["venue_dew_factor"]    = v.get("dew_factor", 0.5)
-        f["w_temp"]    = weather.get("temp_c", 28)
-        f["w_humid"]   = weather.get("humidity", 65)
-        f["w_rain"]    = weather.get("rain_prob", 15)
-        f["w_cloud"]   = weather.get("cloud_cover", 30)
-        f["w_dew"]     = weather.get("dew_risk", 0.3)
-        f["w_wind"]    = weather.get("wind_kph", 10)
-        f["is_night"]  = float(weather.get("is_night", True))
-        f["p_pace"]    = pitch.get("pace_index", 6.0)
-        f["p_spin"]    = pitch.get("spin_index", 6.0)
-        f["p_bounce"]  = pitch.get("bounce_index", 5.0)
-        f["p_score"]   = pitch.get("expected_score", 168)
-        sq1 = squads.get(t1, FALLBACK_SQUADS.get(t1, {}))
-        sq2 = squads.get(t2, FALLBACK_SQUADS.get(t2, {}))
-        f["t1_bat"]  = self._bat_strength(sq1, pitch)
-        f["t2_bat"]  = self._bat_strength(sq2, pitch)
-        f["t1_bowl"] = self._bowl_strength(sq1, pitch)
-        f["t2_bowl"] = self._bowl_strength(sq2, pitch)
-        f["bat_diff"]  = f["t1_bat"]  - f["t2_bat"]
-        f["bowl_diff"] = f["t1_bowl"] - f["t2_bowl"]
+        feats["venue_avg_first"] = v.get("avg_first_innings", feats.get("venue_avg_1st_innings", 168))
+        feats["venue_pace_index"] = v.get("pace_index", 6.0)
+        feats["venue_spin_index"] = v.get("spin_index", 6.0)
+        feats["venue_boundary_freq"] = v.get("boundary_freq", 0.62)
+        feats["venue_dew_factor"] = v.get("dew_factor", 0.5)
 
-        f["t1_elo"] = self.elo.get(TEAMS.get(t1, t1))
-        f["t2_elo"] = self.elo.get(TEAMS.get(t2, t2))
-        f["elo_diff"] = f["t1_elo"] - f["t2_elo"]
+        feats["w_temp"] = weather.get("temp_c", 28)
+        feats["w_humid"] = weather.get("humidity", 65)
+        feats["w_rain"] = weather.get("rain_prob", 15)
+        feats["w_cloud"] = weather.get("cloud_cover", 30)
+        feats["w_dew"] = weather.get("dew_risk", 0.3)
+        feats["w_wind"] = weather.get("wind_kph", 10)
+        feats["is_night"] = float(weather.get("is_night", True))
 
-        t1_wins, t1_form = recent_form(t1, self.info_df, n=5)
-        t2_wins, t2_form = recent_form(t2, self.info_df, n=5)
-        f["t1_wins"] = t1_wins
-        f["t2_wins"] = t2_wins
-        f["t1_form_score"] = t1_form
-        f["t2_form_score"] = t2_form
-        f["form_diff"] = t1_form - t2_form
+        feats["p_pace"] = pitch.get("pace_index", 6.0)
+        feats["p_spin"] = pitch.get("spin_index", 6.0)
+        feats["p_bounce"] = pitch.get("bounce_index", 5.0)
+        feats["p_score"] = pitch.get("expected_score", 168)
 
-        h2h = self._h2h(t1, t2)
-        f["h2h_wr"] = h2h.get("t1_wr", 0.5); f["h2h_total"] = h2h.get("total", 10)
-        f["t1_venue_wr"]  = self._venue_wr(t1, venue)
-        f["t2_venue_wr"]  = self._venue_wr(t2, venue)
-        f["t1_pitch_aff"] = self._pitch_affinity(sq1, pitch)
-        f["t2_pitch_aff"] = self._pitch_affinity(sq2, pitch)
-        f["pitch_aff_diff"] = f["t1_pitch_aff"] - f["t2_pitch_aff"]
+        feats["t1_bat"] = feats.get("t1_bat_score", 28.0)
+        feats["t2_bat"] = feats.get("t2_bat_score", 28.0)
+        feats["t1_bowl"] = feats.get("t1_bowl_score", 13.5)
+        feats["t2_bowl"] = feats.get("t2_bowl_score", 13.5)
+        feats["t1_wins"] = feats.get("t1_recent_wins", 3)
+        feats["t2_wins"] = feats.get("t2_recent_wins", 3)
+        feats["t1_form_score"] = feats.get("t1_form_exp", 0.50)
+        feats["t2_form_score"] = feats.get("t2_form_exp", 0.50)
+        feats["form_diff"] = feats.get("form_diff_exp", 0.0)
 
-        f.update(toss_venue_features(0.0, 0.0, venue, self.info_df))
-        f.update(bowling_phase_strength(sq1, self.ball_df, pitch))
-        f["t1_matchup"] = matchup_score(sq1, sq2)
-        f["t2_matchup"] = matchup_score(sq2, sq1)
-        f["matchup_diff"] = f["t1_matchup"] - f["t2_matchup"]
-        return f
+        feats["h2h_wr"] = feats.get("h2h_t1_wr", 0.50)
+        feats["h2h_total"] = feats.get("h2h_matches_count", 10)
+        feats["pitch_aff_diff"] = 0.0
+
+        return feats
 
     def _bat_strength(self, squad, pitch):
-        """
-        Batting strength = weighted average of actual batting lineup quality.
-        Uses WK-BAT + BAT + ALL roles only (not bowlers).
-        """
-        if "all_players" in squad:
-            players = [p for p in squad["all_players"]
-                       if PLAYER_DB.get(p, {}).get("role") in ["BAT","WK-BAT","ALL"]][:8]
-        else:
-            players = (squad.get("wk", []) + 
-                       squad.get("batters", []) + 
-                       squad.get("all_rounders", []))[:8]
-        
-        scores = []
-        for p in players:
-            db  = PLAYER_DB.get(p, {})
-            avg = db.get("bat_avg", 20.0)
-            sr  = db.get("bat_sr",  125.0)
-            if avg > 0 and sr > 0:
-                s = avg * 0.55 + sr * 0.14
-                # Pitch adjustment: spin pitch hurts RHB
-                if pitch.get("spin_index", 5) > 7.5 and db.get("bat_style") == "RHB":
-                    s *= 0.90
-                # Batting-friendly bonus
-                if pitch.get("batting_friendly"):
-                    s *= 1.05
-                scores.append(s)
+        players = _all_players(squad)[:7]
+        scores = [self.state.get_player_batting_rating(p)["composite_rating"] for p in players]
         return round(float(np.mean(scores)) if scores else 28.0, 2)
 
     def _bowl_strength(self, squad, pitch):
-        """
-        Bowling strength = quality of actual bowling attack.
-        Uses BOWL + ALL roles only (not pure batters or WK).
-        """
-        if "all_players" in squad:
-            players = [p for p in squad["all_players"]
-                       if PLAYER_DB.get(p, {}).get("bowl_eco") is not None
-                       and PLAYER_DB.get(p, {}).get("bowl_eco", 0) > 0][:7]
-        else:
-            players = (squad.get("bowlers", []) + 
-                       squad.get("all_rounders", []))[:7]
-        
-        scores = []
-        pi = pitch.get("pace_index", 5)
-        si = pitch.get("spin_index", 5)
-        
-        for p in players:
-            db    = PLAYER_DB.get(p, {})
-            eco   = db.get("bowl_eco")
-            avg   = db.get("bowl_avg")
-            style = db.get("bowl_style", "")
-            if not eco or not avg: continue
-            
-            # Base score: lower eco and avg = stronger bowler
-            s = (7.5 / eco) * (32.0 / max(avg, 15)) * 18
-            
-            # Pitch-style bonus
-            if style in ["RF","RFM","LFM","LF","RMF"] and pi > 6.5:
-                s *= 1.14
-            elif style in ["OB","SLA","LBG","LBC","SLO"] and si > 6.5:
-                s *= 1.14
-            # Penalty for wrong pitch type
-            if style in ["RF","RFM","LFM","LF"] and si > 7.5:
-                s *= 0.88
-            if style in ["OB","SLA","LBG","LBC","SLO"] and pi > 7.5:
-                s *= 0.88
-            scores.append(s)
-        return round(float(np.mean(scores)) if scores else 13.0, 2)
+        players = _all_players(squad)[-5:]
+        scores = [self.state.get_player_bowling_rating(p)["composite_rating"] for p in players]
+        return round(float(np.mean(scores)) if scores else 13.5, 2)
 
     def _form(self, team):
-        if self.info_df.empty: return 3
-        try:
-            tf = TEAMS.get(team, team)
-            tm = self.info_df[self.info_df["value"].str.contains(tf, case=False, na=False)]["match_id"].unique()
-            wm = self.info_df[(self.info_df["key"]=="winner") &
-                              (self.info_df["match_id"].isin(tm)) &
-                              (self.info_df["value"].str.contains(tf, case=False, na=False))]["match_id"]
-            return int(len(wm.tail(5)))
-        except: return 3
+        from ipl_temporal import normalize_team
+        wins, _ = self.state.get_team_form(normalize_team(team), n=5)
+        return wins
 
     def _h2h(self, t1, t2):
-        if self.info_df.empty: return {"t1_wr": 0.5, "total": 10}
-        try:
-            tf1 = TEAMS.get(t1, t1); tf2 = TEAMS.get(t2, t2)
-            m1 = set(self.info_df[self.info_df["value"].str.contains(tf1, case=False, na=False)]["match_id"])
-            m2 = set(self.info_df[self.info_df["value"].str.contains(tf2, case=False, na=False)]["match_id"])
-            shared = m1 & m2
-            if not shared: return {"t1_wr": 0.5, "total": 0}
-            wr    = self.info_df[(self.info_df["key"]=="winner") & (self.info_df["match_id"].isin(shared)) & (self.info_df["value"].str.contains(tf1, case=False, na=False))]
-            total = len(self.info_df[(self.info_df["key"]=="winner") & (self.info_df["match_id"].isin(shared))])
-            return {"t1_wr": round(len(wr)/max(total, 1), 3), "total": total}
-        except: return {"t1_wr": 0.5, "total": 10}
+        from ipl_temporal import normalize_team
+        return self.state.get_h2h_stats(normalize_team(t1), normalize_team(t2))
 
     def _venue_wr(self, team, venue):
-        if self.info_df.empty: return 0.5
-        try:
-            tf = TEAMS.get(team, team); vword = venue.split()[0]
-            vm = set(self.info_df[(self.info_df["key"]=="venue") & (self.info_df["value"].str.contains(vword, case=False, na=False))]["match_id"])
-            if not vm: return 0.5
-            tm = set(self.info_df[self.info_df["value"].str.contains(tf, case=False, na=False)]["match_id"])
-            joint = vm & tm
-            if not joint: return 0.5
-            wins = len(self.info_df[(self.info_df["key"]=="winner") & (self.info_df["match_id"].isin(joint)) & (self.info_df["value"].str.contains(tf, case=False, na=False))])
-            return round(wins / len(joint), 3)
-        except: return 0.5
-
-    def _pitch_affinity(self, squad, pitch):
-        players = _all_players(squad)
-        pi = pitch.get("pace_index", 5); si = pitch.get("spin_index", 5)
-        pace_n = sum(1 for p in players if PLAYER_DB.get(p, {}).get("bowl_style","") in ["RF","RFM","LFM","LF"])
-        spin_n = sum(1 for p in players if PLAYER_DB.get(p, {}).get("bowl_style","") in ["OB","SLA","LBG","LBC","SLO"])
-        n = max(pace_n + spin_n, 1)
-        return round((pace_n * pi + spin_n * si) / n / 10, 3)
+        from ipl_temporal import normalize_team, normalize_venue
+        stats = self.state.get_venue_stats(normalize_venue(venue), normalize_team(team), "UNK")
+        return stats.get("t1_venue_wr", 0.50)
 
     def partnership_synergy(self, p1, p2):
-        key = f"ps_{min(p1,p2)}_{max(p1,p2)}"
-        if key in self._cache: return self._cache[key]
-        default = {"avg_part": 28.0, "synergy": 1.0, "n": 0}
-        if self.ball_df.empty:
-            self._cache[key] = default; return default
-        try:
-            bc = "batter" if "batter" in self.ball_df.columns else "batsman"
-            rc = "batsman_runs" if "batsman_runs" in self.ball_df.columns else "runs_off_bat"
-            ic = "innings" if "innings" in self.ball_df.columns else "inning"
-            # find matches where both appeared
-            m1 = set(self.ball_df[self.ball_df[bc]==p1]["match_id"])
-            m2 = set(self.ball_df[self.ball_df[bc]==p2]["match_id"])
-            shared = m1 & m2
-            if len(shared) < 3:
-                self._cache[key] = default; return default
-            together = self.ball_df[(self.ball_df["match_id"].isin(shared)) &
-                                    (self.ball_df[bc].isin([p1, p2]))]
-            runs_per = together.groupby(["match_id", ic])[rc].sum()
-            avg_part = round(runs_per.mean(), 1)
-            league_avg = 28.0
-            synergy = round(avg_part / league_avg, 3)
-            result = {"avg_part": avg_part, "synergy": synergy, "n": len(shared)}
-            self._cache[key] = result; return result
-        except:
-            self._cache[key] = default; return default
+        return {"avg_part": 28.0, "synergy": 1.0, "n": 5}
 
     def player_venue_record(self, player, venue):
-        if self.ball_df.empty or self.info_df.empty: return {"has_data": False}
-        try:
-            vword = venue.split()[0]
-            vm = set(self.info_df[(self.info_df["key"]=="venue") &
-                                  (self.info_df["value"].str.contains(vword, case=False, na=False))]["match_id"])
-            if not vm: return {"has_data": False}
-            bc = "batter" if "batter" in self.ball_df.columns else "batsman"
-            rc = "batsman_runs" if "batsman_runs" in self.ball_df.columns else "runs_off_bat"
-            ic = "innings" if "innings" in self.ball_df.columns else "inning"
-            pdf = self.ball_df[(self.ball_df["match_id"].isin(vm)) & (self.ball_df[bc]==player)]
-            if len(pdf) < 6: return {"has_data": len(pdf) > 0, "balls": len(pdf)}
-            runs = pdf[rc].sum(); balls = len(pdf)
-            grp  = pdf.groupby(["match_id", ic])[rc].sum()
-            return {"has_data": True, "venue_avg": round(grp.mean(), 2),
-                    "venue_sr": round(runs/balls*100, 2),
-                    "venue_balls": balls, "venue_innings": len(grp)}
-        except: return {"has_data": False}
+        return {"has_data": False}
 
-# ─────────────────────────────────────────────────────────────────────────────
-# MODEL TRAINER  (Ensemble: XGBoost + LightGBM + ExtraTrees + MLP → LogReg)
-# ─────────────────────────────────────────────────────────────────────────────
-# %%
 
 class ModelTrainer:
-    FEATURE_NAMES = [
-        "venue_avg_first","venue_pace_index","venue_spin_index","venue_boundary_freq",
-        "venue_chase_wr","venue_dew_factor","w_temp","w_humid","w_rain","w_cloud",
-        "w_dew","w_wind","is_night","p_pace","p_spin","p_bounce","p_score",
-        "t1_bat","t2_bat","t1_bowl","t2_bowl","bat_diff","bowl_diff",
-        "t1_elo","t2_elo","elo_diff",
-        "t1_wins","t2_wins","t1_form_score","t2_form_score","form_diff",
-        "h2h_wr","h2h_total",
-        "t1_venue_wr","t2_venue_wr","t1_pitch_aff","t2_pitch_aff","pitch_aff_diff",
-        "toss_won","chose_bat","toss_bat_venue","toss_field_venue",
-        "pp_bowl_str","death_bowl_str","mid_bowl_str",
-        "t1_matchup","t2_matchup","matchup_diff",
-    ]
+    from ipl_temporal import TemporalFeatureEngine
+    FEATURE_NAMES = TemporalFeatureEngine.FEATURE_NAMES
 
     def __init__(self):
-        self.models  = {}
-        self.scaler  = StandardScaler()
+        from ipl_models_pipeline import LeakFreeEnsemble
+        self.ensemble = LeakFreeEnsemble(random_seed=RANDOM_SEED, use_calibration=True)
         self.trained = False
         self.cv_scores = {}
-        self.sample_weights = None
-        self.prob_shrink = 0.85
 
-    def prepare_dataset(self, info_df, ball_df, feat_eng, squads):
-        """Build training matrix from real match data + synthetic supplement."""
-        rows = []; labels = []; years = []
+    def prepare_dataset(self, info_df=None, ball_df=None, feat_eng=None, squads=None):
+        from ipl_temporal import ChronologicalDataLoader, HistoricalStateTracker, TemporalFeatureEngine
+        loader = ChronologicalDataLoader()
+        matches = loader.load_all_matches()
+        completed = [m for m in matches if m.is_completed]
 
-        if not info_df.empty:
-            match_ids = info_df[info_df["key"]=="winner"]["match_id"].unique()
-            print(f"  Building features for {len(match_ids)} real matches…")
-            max_year = None
-            try:
-                dvals = info_df[info_df["key"]=="date"]["value"].astype(str).str.replace("/", "-", regex=False)
-                yrs = pd.to_datetime(dvals, errors="coerce").dt.year.dropna().astype(int)
-                if len(yrs) > 0:
-                    max_year = int(yrs.max())
-            except Exception:
-                pass
-            min_train_year = (max_year - 7) if max_year else None
+        fe = TemporalFeatureEngine(mode="pre_xi")
+        state = HistoricalStateTracker()
 
-            for mid in tqdm(match_ids, desc="Features"):
-                try:
-                    mi = info_df[info_df["match_id"]==mid]
-                    winner = mi[mi["key"]=="winner"]["value"].values[0]
-                    teams  = mi[mi["key"]=="team"]["value"].tolist()
-                    if len(teams) < 2: continue
-                    t1, t2 = _resolve_team(teams[0]), _resolve_team(teams[1])
-                    venue_val = mi[mi["key"]=="venue"]["value"].values
-                    venue = venue_val[0] if len(venue_val) else "Wankhede Stadium"
-                    date_val  = mi[mi["key"]=="date"]["value"].values
-                    date  = str(date_val[0]).replace("/", "-") if len(date_val) else "2023-04-01"
-                    d_year = pd.to_datetime(date, errors="coerce").year
-                    if min_train_year and not pd.isna(d_year) and int(d_year) < int(min_train_year):
-                        continue
-                    pitch = PitchPredictor().predict(venue, str(date), WeatherModule()._default())
-                    weather = WeatherModule()._default()
-                    sq1 = squads.get(t1, FALLBACK_SQUADS.get(t1, FALLBACK_SQUADS["MI"]))
-                    sq2 = squads.get(t2, FALLBACK_SQUADS.get(t2, FALLBACK_SQUADS["CSK"]))
-                    fv = feat_eng.build(t1, t2, venue, weather, pitch, {t1: sq1, t2: sq2})
-                    row = [fv.get(k, 0) for k in self.FEATURE_NAMES]
-                    tf1 = TEAMS.get(t1, t1); label = 1 if tf1.lower() in winner.lower() else 0
-                    rows.append(row); labels.append(label)
-                    years.append(int(d_year) if not pd.isna(d_year) else (max_year or 2023))
-                except: pass
+        rows = []
+        labels = []
 
-        # Synthetic supplement only when real data is too low.
-        need = max(0, 450 - len(rows))
-        if need > 0:
-            print(f"  Generating {need} synthetic training samples…")
-            syn_rows, syn_labels = self._synthetic(need)
-            rows.extend(syn_rows); labels.extend(syn_labels)
-            base_year = max(years) if years else 2023
-            years.extend([base_year - 1] * len(syn_rows))
+        print(f"  Building leak-free features chronologically for {len(completed)} matches…")
+        for m in tqdm(completed, desc="Features"):
+            f_dict = fe.build_features(m, state)
+            row = [f_dict.get(k, 0.0) for k in self.FEATURE_NAMES]
+            label = 1 if m.winner == m.team1 else 0
+            rows.append(row)
+            labels.append(label)
+            state.update_match_result(m)
 
         X = np.array(rows, dtype=float)
-        y = np.array(labels)
-        X = np.nan_to_num(X, nan=np.nanmedian(X, axis=0))
-
-        # Recency weighting: newer seasons dominate; synthetic rows get low influence.
-        if len(years) == len(rows) and len(years) > 0:
-            max_year = max(years)
-            w = []
-            real_n = len(rows) - need
-            for i, yr in enumerate(years):
-                age = max(0, max_year - int(yr))
-                wt = math.exp(-0.28 * age)
-                if int(yr) >= max_year - 2:
-                    wt *= 1.25
-                if i >= real_n:
-                    wt *= 0.35
-                w.append(wt)
-            self.sample_weights = np.array(w, dtype=float)
-        else:
-            self.sample_weights = None
-
-        print(f"  ✅ Dataset: {len(X)} samples × {X.shape[1]} features")
+        y = np.array(labels, dtype=int)
+        print(f"  ✅ Dataset: {len(X)} real matches × {X.shape[1]} features (synthetic: False)")
         return X, y
 
-    def _synthetic(self, n):
-        rows, labels = [], []
-        rng = np.random.RandomState(42)
-        for _ in range(n):
-            bat_diff  = rng.normal(0, 4)
-            bowl_diff = rng.normal(0, 2)
-            form_diff = rng.choice([-2,-1,0,1,2])
-            h2h_wr    = rng.uniform(0.3, 0.7)
-            t1_vwr    = rng.uniform(0.35, 0.65)
-            t2_vwr    = rng.uniform(0.35, 0.65)
-            dew       = rng.uniform(0.1, 0.9)
-            is_night  = float(rng.choice([0, 1]))
-            pace_idx  = rng.uniform(4, 9); spin_idx = rng.uniform(3, 9)
-            t1_elo = rng.normal(1500, 70)
-            t2_elo = rng.normal(1500, 70)
-            elo_diff = t1_elo - t2_elo
-            t1_form_score = np.clip(0.5 + form_diff * 0.09 + rng.normal(0, 0.05), 0.05, 0.95)
-            t2_form_score = np.clip(0.5 - form_diff * 0.09 + rng.normal(0, 0.05), 0.05, 0.95)
-            toss_won = float(rng.choice([0, 1]))
-            chose_bat = float(rng.choice([0, 1]))
-            toss_bat_venue = rng.uniform(0.40, 0.62)
-            toss_field_venue = rng.uniform(0.38, 0.60)
-            pp_bowl = rng.uniform(11.5, 16.5)
-            death_bowl = rng.uniform(11.0, 16.0)
-            mid_bowl = rng.uniform(11.5, 16.5)
-            t1_matchup = rng.uniform(0.93, 1.07)
-            t2_matchup = rng.uniform(0.93, 1.07)
-            matchup_diff = t1_matchup - t2_matchup
-            row = [
-                rng.uniform(155,190), pace_idx, spin_idx,
-                rng.uniform(0.50,0.78), rng.uniform(0.42,0.58), rng.uniform(0.2,0.8),
-                rng.uniform(22,40), rng.uniform(40,95), rng.uniform(0,60),
-                rng.uniform(10,90), dew, rng.uniform(5,30), is_night,
-                pace_idx, spin_idx, rng.uniform(4,8), rng.randint(145,195),
-                rng.uniform(24,38)+bat_diff, rng.uniform(24,38),
-                rng.uniform(11,18)+bowl_diff*0.3, rng.uniform(11,18),
-                bat_diff, bowl_diff,
-                t1_elo, t2_elo, elo_diff,
-                rng.randint(0,6), rng.randint(0,6), t1_form_score, t2_form_score, float(form_diff),
-                h2h_wr, rng.randint(5,35),
-                t1_vwr, t2_vwr,
-                rng.uniform(0.3,0.7), rng.uniform(0.3,0.7),
-                rng.uniform(-0.3,0.3),
-                toss_won, chose_bat, toss_bat_venue, toss_field_venue,
-                pp_bowl, death_bowl, mid_bowl,
-                t1_matchup, t2_matchup, matchup_diff,
-            ]
-            p_win = 1/(1+np.exp(-(
-                bat_diff*0.16 + bowl_diff*0.20 + form_diff*0.14 + elo_diff*0.004 +
-                matchup_diff*0.8 + (pp_bowl - death_bowl)*0.03 +
-                (h2h_wr-0.5)*2.5 + (t1_vwr-t2_vwr)*2.0 +
-                (dew-0.5)*0.8*(-is_night) + rng.normal(0,0.3)
-            )))
-            rows.append(row); labels.append(1 if p_win > 0.5 else 0)
-        return rows, labels
-
     def train(self, X, y):
-        print("\n🤖 Training ensemble models…")
-        tscv = TimeSeriesSplit(n_splits=5)
-        Xs = self.scaler.fit_transform(X)
-        sw = self.sample_weights if isinstance(self.sample_weights, np.ndarray) and len(self.sample_weights) == len(X) else None
-
-        configs = {
-            "XGBoost": xgb.XGBClassifier(
-                n_estimators=300, max_depth=5, learning_rate=0.05,
-                subsample=0.8, colsample_bytree=0.8, use_label_encoder=False,
-                eval_metric="logloss", random_state=42, verbosity=0),
-            "LightGBM": lgb.LGBMClassifier(
-                n_estimators=300, max_depth=5, learning_rate=0.05,
-                subsample=0.8, colsample_bytree=0.8, random_state=42, verbose=-1),
-            "ExtraTrees": ExtraTreesClassifier(
-                n_estimators=200, max_depth=8, random_state=42, n_jobs=-1),
-            "NeuralNet": MLPClassifier(
-                hidden_layer_sizes=(128,64,32), max_iter=300,
-                learning_rate="adaptive", random_state=42, early_stopping=True),
-        }
-
-        oof_preds = np.zeros((len(X), len(configs)))
-        for ci, (name, clf) in enumerate(configs.items()):
-            fold_scores = []
-            oof = np.zeros(len(X))
-            for fold, (tr, va) in enumerate(tscv.split(X)):
-                Xtr, Xva = (X[tr], X[va]) if name == "XGBoost" else (Xs[tr], Xs[va])
-                if sw is not None and name in ["XGBoost", "LightGBM", "ExtraTrees"]:
-                    clf.fit(Xtr, y[tr], sample_weight=sw[tr])
-                else:
-                    clf.fit(Xtr, y[tr])
-                pva  = clf.predict_proba(Xva)[:,1]
-                oof[va] = pva
-                fold_scores.append(accuracy_score(y[va], (pva > 0.5).astype(int)))
-            mean_acc = np.mean(fold_scores)
-            self.cv_scores[name] = round(mean_acc, 4)
-            bar = "█" * int(mean_acc * 30) + "░" * (30 - int(mean_acc * 30))
-            print(f"  {name:12s} [{bar}] {mean_acc:.1%}")
-            # Retrain on all data
-            inp = X if name == "XGBoost" else Xs
-            if sw is not None and name in ["XGBoost", "LightGBM", "ExtraTrees"]:
-                clf.fit(inp, y, sample_weight=sw)
-            else:
-                clf.fit(inp, y)
-            self.models[name] = clf
-            oof_preds[:, ci] = oof
-
-        # Meta-learner
-        print("  Training meta-learner (LogisticRegression)…")
-        meta = LogisticRegression(C=1.0, random_state=42)
-        if sw is not None:
-            meta.fit(oof_preds, y, sample_weight=sw)
-        else:
-            meta.fit(oof_preds, y)
-        self.models["meta"] = meta
-
-        # Ensemble CV
-        meta_preds = meta.predict_proba(oof_preds)[:,1]
-        ens_acc = accuracy_score(y, (meta_preds > 0.5).astype(int))
-        print(f"\n  {'Ensemble':12s} [{'█'*int(ens_acc*30)+'░'*(30-int(ens_acc*30))}] {ens_acc:.1%}")
-        self.cv_scores["Ensemble"] = round(ens_acc, 4)
+        print("\n🤖 Training leak-free ensemble pipeline with expanding-window CV…")
+        self.ensemble.fit(X, y)
         self.trained = True
+        print("  ✅ Ensemble trained and calibrated with Isotonic Regression")
+
+    ALIAS_MAP = {
+        "t1_bat": "t1_bat_score",
+        "t2_bat": "t2_bat_score",
+        "t1_bowl": "t1_bowl_score",
+        "t2_bowl": "t2_bowl_score",
+        "bat_diff": "bat_score_diff",
+        "bowl_diff": "bowl_score_diff",
+        "h2h_wr": "h2h_t1_wr",
+        "h2h_total": "h2h_matches_count",
+        "t1_wins": "t1_recent_wins",
+        "t2_wins": "t2_recent_wins",
+        "form_diff": "form_diff_exp",
+        "t1_form_score": "t1_form_exp",
+        "t2_form_score": "t2_form_exp",
+        "elo_diff": "elo_diff_pre",
+    }
 
     def predict(self, features: dict):
         if not self.trained:
             raise RuntimeError("Call train() first")
-        row = np.array([[features.get(k, 0) for k in self.FEATURE_NAMES]], dtype=float)
-        row_s = self.scaler.transform(row)
-        preds = []
+
+        f_copy = dict(features)
+        # Apply alias mappings and sync overrides
+        for alias, canonical in self.ALIAS_MAP.items():
+            if alias in features and canonical in features:
+                # If alias was mutated differently from canonical, sync it
+                if features[alias] != features[canonical]:
+                    f_copy[canonical] = f_copy[alias]
+            elif alias in f_copy and canonical not in f_copy:
+                f_copy[canonical] = f_copy[alias]
+            elif canonical in f_copy and alias not in f_copy:
+                f_copy[alias] = f_copy[canonical]
+
+        # Recompute differentials if base strengths were mutated in sensitivity analysis
+        if "t1_bat_score" in f_copy and "t2_bat_score" in f_copy:
+            f_copy["bat_diff"] = f_copy["t1_bat_score"] - f_copy["t2_bat_score"]
+        elif "t1_bat" in f_copy and "t2_bat" in f_copy:
+            f_copy["bat_diff"] = f_copy["t1_bat"] - f_copy["t2_bat"]
+
+        if "t1_bowl_score" in f_copy and "t2_bowl_score" in f_copy:
+            f_copy["bowl_diff"] = f_copy["t1_bowl_score"] - f_copy["t2_bowl_score"]
+        elif "t1_bowl" in f_copy and "t2_bowl" in f_copy:
+            f_copy["bowl_diff"] = f_copy["t1_bowl"] - f_copy["t2_bowl"]
+
+        if "t1_recent_wins" in f_copy and "t2_recent_wins" in f_copy:
+            f_copy["form_diff_exp"] = (f_copy["t1_recent_wins"] - f_copy["t2_recent_wins"]) / 5.0
+        elif "t1_wins" in f_copy and "t2_wins" in f_copy:
+            f_copy["form_diff_exp"] = (f_copy["t1_wins"] - f_copy["t2_wins"]) / 5.0
+
+        if "t1_elo" in f_copy and "t2_elo" in f_copy:
+            f_copy["elo_diff"] = f_copy["t1_elo"] - f_copy["t2_elo"]
+            f_copy["elo_expected_t1"] = 1.0 / (1.0 + 10.0 ** (-f_copy["elo_diff"] / 400.0))
+
+        row = np.array([[f_copy.get(k, 0.0) for k in self.FEATURE_NAMES]], dtype=float)
+        probs = self.ensemble.predict_proba(row)[0]
+        prob_t1 = float(probs[1])
+        prob_t2 = float(probs[0])
+
         model_probs = {}
-        for name, clf in self.models.items():
-            if name == "meta": continue
-            inp = row if name == "XGBoost" else row_s
-            prob = clf.predict_proba(inp)[0][1]
-            preds.append(prob); model_probs[name] = round(prob, 4)
-        oof_row = np.array([preds])
-        final = self.models["meta"].predict_proba(oof_row)[0][1]
-        # Mild confidence shrink to reduce systematic overconfidence bias.
-        final = 0.5 + (final - 0.5) * self.prob_shrink
-        std   = np.std(preds)
+        if hasattr(self.ensemble, "base_models"):
+            row_s = self.ensemble.scaler.transform(row)
+            for name, clf in self.ensemble.base_models.items():
+                inp = row_s if name in ["LogisticRegression", "NeuralNet", "ExtraTrees"] else row
+                p = float(clf.predict_proba(inp)[0, 1])
+                model_probs[name] = round(p, 4)
+
+        std = float(np.std(list(model_probs.values()))) if model_probs else 0.05
         confidence_pct = float(np.clip(0.80 + (0.10 - std) * 0.20, 0.76, 0.86))
         confidence = "HIGH" if confidence_pct >= 0.84 else "MEDIUM" if confidence_pct >= 0.79 else "LOW"
+
         return {
-            "win_prob_t1":  round(final, 4),
-            "win_prob_t2":  round(1 - final, 4),
-            "model_probs":  model_probs,
-            "std_dev":      round(std, 4),
-            "confidence":   confidence,
+            "win_prob_t1": round(prob_t1, 4),
+            "win_prob_t2": round(prob_t2, 4),
+            "model_probs": model_probs,
+            "std_dev": round(std, 4),
+            "confidence": confidence,
             "confidence_pct": round(confidence_pct, 4),
         }
 
     def feature_importance(self):
-        if "XGBoost" not in self.models: return {}
-        imp = self.models["XGBoost"].feature_importances_
-        return dict(sorted(zip(self.FEATURE_NAMES, imp), key=lambda x: -x[1]))
+        if hasattr(self.ensemble, "base_models") and "XGBoost" in self.ensemble.base_models:
+            imp = self.ensemble.base_models["XGBoost"].feature_importances_
+            return dict(sorted(zip(self.FEATURE_NAMES, imp), key=lambda x: -x[1]))
+        return {k: 1.0 / len(self.FEATURE_NAMES) for k in self.FEATURE_NAMES}
 
-    def save(self, path=MODELS_DIR/"ipl_ensemble.pkl"):
-        joblib.dump({"models": self.models, "scaler": self.scaler,
-                     "cv_scores": self.cv_scores}, path)
+    def save(self, path=MODELS_DIR / "ipl_ensemble.pkl"):
+        joblib.dump({"ensemble": self.ensemble, "trained": self.trained}, path)
         print(f"💾 Models saved to {path}")
 
-    def load(self, path=MODELS_DIR/"ipl_ensemble.pkl"):
+    def load(self, path=MODELS_DIR / "ipl_ensemble.pkl"):
         data = joblib.load(path)
-        self.models = data["models"]; self.scaler = data["scaler"]
-        self.cv_scores = data.get("cv_scores", {})
-
-        # Guard against stale model artifacts after feature-set changes.
-        expected_n = len(self.FEATURE_NAMES)
-        loaded_n = getattr(self.scaler, "n_features_in_", None)
-        if loaded_n is not None and int(loaded_n) != expected_n:
-            raise ValueError(
-                f"Saved model expects {loaded_n} features, current code provides {expected_n}."
-            )
-
-        self.trained = True
+        self.ensemble = data["ensemble"]
+        self.trained = data.get("trained", True)
         print(f"✅ Models loaded from {path}")
 
 
@@ -2135,179 +1899,18 @@ class MatchAnalyzer:
         print(f"      unpredictable. Past data ≠ guaranteed outcome.\n")
 
 class ModelEvaluator:
-    """Backtest the IPL predictor on historical Cricsheet data."""
+    """Backtest the IPL predictor using leak-free walk-forward validation."""
 
-    def __init__(self, analyzer, info_df, ball_df, squads):
+    def __init__(self, analyzer=None, info_df=None, ball_df=None, squads=None):
         self.analyzer = analyzer
-        self.info_df = info_df
-        self.ball_df = ball_df
-        self.squads = squads
 
-    def run(self, test_seasons=range(2021, 2026), verbose=True):
-        if self.info_df.empty:
-            print("No Cricsheet data available for backtest.")
-            return {}
-
-        results = []
-        score_errs = []
-        by_season = defaultdict(list)
-        match_ids = self.info_df[self.info_df["key"] == "winner"]["match_id"].unique()
-
-        for mid in sorted(match_ids):
-            mi = self.info_df[self.info_df["match_id"] == mid]
-            winner_row = mi[mi["key"] == "winner"]["value"].values
-            team_rows = mi[mi["key"] == "team"]["value"].tolist()
-            date_rows = mi[mi["key"] == "date"]["value"].values
-            venue_rows = mi[mi["key"] == "venue"]["value"].values
-            if len(winner_row) < 1 or len(team_rows) < 2 or len(date_rows) < 1:
-                continue
-
-            try:
-                year = int(str(date_rows[0])[:4])
-            except Exception:
-                continue
-            if year not in test_seasons:
-                continue
-
-            winner = winner_row[0]
-            t1, t2 = team_rows[0], team_rows[1]
-            venue = venue_rows[0] if len(venue_rows) else "Wankhede Stadium"
-            t1a = _resolve_team(t1)
-            t2a = _resolve_team(t2)
-            if t1a not in TEAMS or t2a not in TEAMS:
-                continue
-
-            try:
-                weather = self.analyzer.weather.get(venue, date_rows[0])
-                pitch = self.analyzer.pitch.predict(venue, date_rows[0], weather)
-                sq1 = self.squads.get(t1a, FALLBACK_SQUADS.get(t1a, {}))
-                sq2 = self.squads.get(t2a, FALLBACK_SQUADS.get(t2a, {}))
-                features = self.analyzer.fe.build(t1a, t2a, venue, weather, pitch, {t1a: sq1, t2a: sq2})
-                pred = self.analyzer.model.predict(features)
-                prob_t1 = pred["win_prob_t1"]
-                actual = 1.0 if t1.lower() in winner.lower() else 0.0
-                results.append((prob_t1, actual))
-                by_season[year].append((prob_t1, actual))
-
-                actual_scores = self._actual_score(mid)
-                if actual_scores:
-                    bat1 = self.analyzer.proj.project_batting(sq1, venue, pitch, weather, sq2)
-                    self.analyzer._last_weather = weather
-                    s1 = self.analyzer._team_score(bat1, pitch, features=features, innings=1)
-                    score_errs.append(abs(s1.get("projected", 170) - actual_scores[0]))
-            except Exception:
-                continue
-
-        if not results:
-            print("No valid backtest matches found.")
-            return {}
-
-        metrics = self._compute_metrics(results, score_errs, by_season)
-        if verbose:
-            self._print_report(metrics)
-        return metrics
-
-    def _actual_score(self, match_id):
-        if self.ball_df.empty:
-            return None
-        try:
-            ic = "innings" if "innings" in self.ball_df.columns else "inning"
-            rc = "runs_off_bat" if "runs_off_bat" in self.ball_df.columns else "batsman_runs"
-            ec = "extras" if "extras" in self.ball_df.columns else "extra_runs"
-            md = self.ball_df[self.ball_df["match_id"] == match_id]
-            if md.empty:
-                return None
-            inn1 = md[md[ic] == 1]
-            if inn1.empty:
-                return None
-            score = inn1[rc].sum() + inn1.get(ec, pd.Series([0] * len(inn1))).sum()
-            return (int(score),)
-        except Exception:
-            return None
-
-    def _compute_metrics(self, results, score_errs, by_season):
-        probs = np.array([r[0] for r in results])
-        actuals = np.array([r[1] for r in results])
-        preds = (probs > 0.5).astype(float)
-
-        accuracy = float(np.mean(preds == actuals))
-        brier = float(np.mean((probs - actuals) ** 2))
-        eps = 1e-7
-        logloss = float(-np.mean(actuals * np.log(probs + eps) + (1 - actuals) * np.log(1 - probs + eps)))
-        auc = self._auc(probs, actuals)
-        cal = self._calibration(probs, actuals)
-        score_rmse = float(np.sqrt(np.mean(np.array(score_errs) ** 2))) if score_errs else None
-
-        metrics = {
-            "n_matches": len(results),
-            "accuracy": round(accuracy, 4),
-            "brier": round(brier, 4),
-            "log_loss": round(logloss, 4),
-            "roc_auc": round(auc, 4),
-            "score_rmse": round(score_rmse, 1) if score_rmse else None,
-            "calibration": cal,
-            "by_season": {},
-        }
-        for yr, yr_res in sorted(by_season.items()):
-            yr_probs = np.array([r[0] for r in yr_res])
-            yr_actuals = np.array([r[1] for r in yr_res])
-            metrics["by_season"][yr] = {
-                "n": len(yr_res),
-                "accuracy": round(float(np.mean((yr_probs > 0.5) == yr_actuals)), 3),
-                "brier": round(float(np.mean((yr_probs - yr_actuals) ** 2)), 4),
-            }
-        return metrics
-
-    def _auc(self, probs, actuals):
-        pairs = sorted(zip(probs, actuals), reverse=True)
-        n_pos = actuals.sum()
-        n_neg = len(actuals) - n_pos
-        if n_pos == 0 or n_neg == 0:
-            return 0.5
-        tp = fp = auc = 0
-        prev_fp = prev_tp = 0
-        for _, a in pairs:
-            if a == 1:
-                tp += 1
-            else:
-                fp += 1
-            if fp != prev_fp:
-                auc += (tp + prev_tp) * (fp - prev_fp) / 2
-                prev_fp = fp
-                prev_tp = tp
-        return auc / (n_pos * n_neg)
-
-    def _calibration(self, probs, actuals, n_bins=10):
-        bins = np.linspace(0, 1, n_bins + 1)
-        result = []
-        for lo, hi in zip(bins[:-1], bins[1:]):
-            mask = (probs >= lo) & (probs < hi)
-            if mask.sum() < 3:
-                continue
-            pred_mean = float(probs[mask].mean())
-            actual_mean = float(actuals[mask].mean())
-            result.append({
-                "pred_prob": round(pred_mean, 3),
-                "actual_rate": round(actual_mean, 3),
-                "n": int(mask.sum()),
-                "gap": round(abs(pred_mean - actual_mean), 3),
-            })
-        return result
-
-    def _print_report(self, m):
-        print("\n" + "=" * 60)
-        print("IPL MODEL ACCURACY EVALUATION")
-        print("=" * 60)
-        print(f"Matches: {m['n_matches']}")
-        print(f"Accuracy: {m['accuracy']:.1%}")
-        print(f"Brier: {m['brier']:.4f}")
-        print(f"Log loss: {m['log_loss']:.4f}")
-        print(f"ROC-AUC: {m['roc_auc']:.4f}")
-        if m["score_rmse"] is not None:
-            print(f"Score RMSE: {m['score_rmse']:.1f}")
-        print("Per season:")
-        for yr, ys in sorted(m["by_season"].items()):
-            print(f"  {yr}: acc={ys['accuracy']:.1%} brier={ys['brier']:.4f} n={ys['n']}")
+    def run(self, test_seasons=range(2021, 2027), verbose=True):
+        from walk_forward_backtest import WalkForwardBacktester
+        backtester = WalkForwardBacktester(mode="pre_xi")
+        backtester.load_data()
+        season_results, match_preds = backtester.run_walk_forward(test_seasons=list(test_seasons))
+        backtester.save_reports(season_results, match_preds)
+        return {"season_results": season_results, "predictions": match_preds}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

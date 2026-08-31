@@ -1284,7 +1284,7 @@ _STATIC_ROLES = {
 # MAIN BUILDER  — called once at startup
 # ─────────────────────────────────────────────────────────────────────────────
 
-def build_squads_and_players(verbose=True):
+def build_squads_and_players(use_live_scrape=False, verbose=False):
     """
     Returns:
         FALLBACK_SQUADS : dict[team_abbr → squad_dict]
@@ -1294,37 +1294,41 @@ def build_squads_and_players(verbose=True):
     squads = {}
     all_players = set()
 
-    if verbose:
-        print("\n🌐 Building live squad & player stats database…")
-        print("   (Results cached for 24h — first run takes ~3 min)\n")
+    if use_live_scrape:
+        if verbose:
+            print("\n🌐 Building live squad & player stats database…")
+            print("   (Results cached for 24h — first run takes ~3 min)\n")
+        try:
+            squads = scrape_squads(teams, verbose=verbose)
+        except Exception:
+            squads = _HARDCODED_SQUADS
+    else:
+        squads = _HARDCODED_SQUADS
 
-    # ── Step 1: Scrape squads ─────────────────────────────────────────────
-    squads = scrape_squads(teams, verbose=verbose)
     for team in teams:
-        all_players.update(_all_players_flat(squads[team]))
-
-    # ── Step 2: Scrape player stats ───────────────────────────────────────
-    if verbose:
-        print(f"\n  📊 Fetching stats for {len(all_players)} players…")
+        all_players.update(_all_players_flat(squads.get(team, {})))
 
     player_db = {}
-    for i, player in enumerate(sorted(all_players)):
-        if verbose and i % 5 == 0:
-            print(f"    [{i+1}/{len(all_players)}] {player[:30]}")
-        try:
-            stats = scrape_player_stats_espn(player)
-            if stats:
-                player_db[player] = stats
-        except Exception:
-            # Use static fallback
+    if use_live_scrape:
+        if verbose:
+            print(f"\n  📊 Fetching stats for {len(all_players)} players…")
+        for i, player in enumerate(sorted(all_players)):
+            if verbose and i % 5 == 0:
+                print(f"    [{i+1}/{len(all_players)}] {player[:30]}")
+            try:
+                stats = scrape_player_stats_espn(player)
+                if stats:
+                    player_db[player] = stats
+                else:
+                    player_db[player] = _fallback_stats(player)
+            except Exception:
+                player_db[player] = _fallback_stats(player)
+    else:
+        for player in all_players:
             player_db[player] = _fallback_stats(player)
 
     if verbose:
-        live  = sum(1 for v in player_db.values() if v.get("data_source","") not in ["LEAGUE_AVG_PRIOR","PRIOR_ONLY","HARDCODED"])
-        blend = sum(1 for v in player_db.values() if "BLEND" in v.get("data_source",""))
-        print(f"\n  ✅ Player DB: {live} live | {blend} blended | "
-              f"{len(player_db)-live-blend} prior/hardcoded")
-        print(f"  ✅ Squads: all 10 teams ready\n")
+        print(f"  ✅ Squads & Player DB: all 10 teams ready ({len(player_db)} players)\n")
 
     return squads, player_db
 

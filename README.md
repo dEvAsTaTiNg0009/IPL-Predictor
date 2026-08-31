@@ -1,254 +1,202 @@
-# IPL 2026 AI Match Predictor 🏏
+# Leak-Free Stochastic Cricket Prediction (IPL) 🏏
 
-> An end-to-end cricket match prediction system trained on 17 years of IPL ball-by-ball data (2008–2025), with real-time weather integration, pitch modeling, and player-level projections.
-
----
-
-## What It Does
-
-Given two IPL teams and a venue, the system produces:
-
-- **Win probability** for each team (ensemble of 4 ML models)
-- **Projected team score** with realistic range (calibrated to IPL 2022–2025 averages: 130–220 runs)
-- **Individual batting projections** — runs, balls faced, strike rate for all 11 players
-- **Individual bowling projections** — wickets, economy, pitch suitability per bowler
-- **Toss recommendation** based on dew risk, pitch deterioration, venue chase history
-- **Match factors breakdown** — which features are actually driving the prediction
-- **Pitch report** — pace/spin index, expected score, predicted type (TURNER / FAST & BOUNCY / BALANCED etc.)
+> A research-grade, strictly causal match prediction framework for the Indian Premier League (IPL) trained on 18 seasons (2008–2025) of Cricsheet ball-by-ball records and evaluated via sequential walk-forward blind backtesting and holdout testing on the 2026 season.
 
 ---
 
-## Quick Start
+## 🛡️ The Causal Temporal Data Contract
 
+In sports predictive modeling, subtle future leakages (lookahead in rolling statistics, global ELO ratings, target-season playing XI knowledge, and full-dataset normalization) often produce artificially inflated evaluation scores. 
 
-### Local
+This repository implements a **zero-leakage temporal contract**:
+> **Strict Causality Rule:** For any match occurring at timestamp $T$, absolutely no information from $T$ or after $T$ is accessible to feature engineering, normalization/scaling, ELO rating updates, Bayesian priors, model selection, probability calibration, or ensemble meta-learning.
+
+### Prediction Modes
+
+1. **MODE A: PRE-XI (Primary Benchmark)**
+   - Prediction occurs **before** the official toss and playing XI announcement.
+   - Lineups are strictly resolved from each franchise's **most recent prior match** before timestamp $T$.
+   - Evaluates the true real-world forecasting task faced hours before match start.
+
+2. **MODE B: POST-XI (Tactical Benchmark)**
+   - Prediction occurs **after** the official toss and XI announcement.
+   - Evaluates the model when provided the exact announced target-match playing XIs and toss decisions.
+
+---
+
+## 📈 Benchmark Walk-Forward Evaluation (2016–2026)
+
+Evaluated sequentially across **644 fully blind held-out matches** spanning 11 consecutive IPL seasons without synthetic data or temporal leakage.
+
+### Season-by-Season Blind Results (PRE-XI Mode)
+
+| Outer Train Window | Test Season | Matches | Correct | Accuracy | Balanced Acc | ROC-AUC | Log Loss | Brier Score | ELO Baseline | Stronger Baseline |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **2008–2015** | 2016 | 60 | 26 | 43.3% | 41.7% | 0.3806 | 0.7437 | 0.2742 | 50.0% | 46.7% |
+| **2008–2016** | 2017 | 58 | 32 | 55.2% | 50.0% | 0.4573 | 0.6995 | 0.2529 | 51.7% | 55.2% |
+| **2008–2017** | 2018 | 60 | 28 | 46.7% | 49.1% | 0.4364 | 0.7378 | 0.2706 | 43.3% | 46.7% |
+| **2008–2018** | 2019 | 57 | 22 | 38.6% | 50.0% | 0.5110 | 0.7027 | 0.2551 | 45.6% | 38.6% |
+| **2008–2019** | 2020 | 56 | 31 | 55.4% | 55.9% | 0.6073 | 0.6800 | 0.2437 | 53.6% | 48.2% |
+| **2008–2020** | 2021 | 59 | 39 | **66.1%** | 61.9% | 0.6155 | 0.6765 | 0.2416 | 54.2% | 37.3% |
+| **2008–2021** | 2022 | 74 | 30 | 40.5% | 40.5% | 0.4467 | 0.7180 | 0.2627 | 51.4% | 50.0% |
+| **2008–2022** | 2023 | 73 | 30 | 41.1% | 43.1% | 0.4511 | 0.7309 | 0.2686 | 52.1% | 54.8% |
+| **2008–2023** | 2024 | 71 | 39 | **54.9%** | 55.0% | 0.5012 | 0.7051 | 0.2557 | 47.9% | 49.3% |
+| **2008–2024** | 2025 | 70 | 43 | **61.4%** | 62.0% | 0.6282 | 0.6708 | 0.2389 | 45.7% | 47.1% |
+| **2008–2025** | 2026 | 6 | 3 | **50.0%** | 70.0% | 0.4000 | 0.7180 | 0.2624 | 33.3% | 16.7% |
+| **TOTAL / OVERALL** | **2016–2026** | **644** | **323** | **50.2%** | **50.7%** | **0.4879** | **0.7070** | **0.2567** | **49.4%** | **47.4%** |
+
+---
+
+## 🎯 IPL 2026 True Holdout Blind Test
+
+Models were trained strictly on **2008–2025 data (1,146 completed matches)** and evaluated match-by-match on the 2026 holdout season.
+
+| Match ID | Date | Fixture | Venue | Predicted Winner (Prob) | Actual Winner | Result | T1 XI Source | T2 XI Source |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **1527674** | 2026-03-28 | SRH vs RCB | M Chinnaswamy Stadium, Bengaluru | SRH (54.0%) | RCB | ❌ Incorrect | Match 1473505 | Match 1473511 |
+| **1527675** | 2026-03-29 | KKR vs MI | Wankhede Stadium, Mumbai | KKR (54.0%) | MI | ❌ Incorrect | Match 1473505 | Match 1473510 |
+| **1527676** | 2026-03-30 | CSK vs RR | Barsapara Cricket Stadium, Guwahati | RR (51.3%) | RR | ✅ **Correct** | Match 1473504 | Match 1473500 |
+| **1527677** | 2026-03-31 | GT vs PBKS | Maharaja Yadavindra Singh Stadium, Mullanpur | PBKS (51.3%) | PBKS | ✅ **Correct** | Match 1473509 | Match 1473511 |
+| **1527678** | 2026-04-01 | LSG vs DC | BRSABV Ekana Stadium, Lucknow | LSG (54.0%) | DC | ❌ Incorrect | Match 1473507 | Match 1485779 |
+| **1527679** | 2026-04-02 | SRH vs KKR | Eden Gardens, Kolkata | SRH (52.6%) | SRH | ✅ **Correct** | Match 1527674 | Match 1527675 |
+
+**2026 Benchmark Metrics:** Accuracy: **50.0% (3/6)** | Log Loss: **0.7180** | Brier Score: **0.2624** | ELO Baseline: **33.3%** | Stronger Team Baseline: **16.7%**
+
+---
+
+## 🧪 Systematic Feature Ablation Study (2020–2026)
+
+To understand feature group contributions, sequential walk-forward evaluation was conducted across 7 incremental feature configurations:
+
+| Config | Feature Group Added | # Feats | Accuracy | Log Loss | Brier Score | ROC-AUC |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: |
+| **A** | Dynamic Pre-Match ELO Only | 4 | 48.4% | 0.6939 | 0.2506 | 0.4828 |
+| **B** | + Team Exponential Form & Win Rates | 10 | 52.6% | 0.6954 | 0.2511 | 0.4810 |
+| **C** | + Head-to-Head Historical Dynamics | 13 | 50.1% | 0.7086 | 0.2530 | 0.5199 |
+| **D** | + Venue Statistics & Chase Win Rates | 19 | 51.3% | 0.6886 | 0.2477 | 0.5168 |
+| **E** | + Player Career-to-Date Batting/Bowling Ratings | 25 | **55.5%** | 0.6933 | 0.2492 | **0.6018** |
+| **F** | + Bowling Phase Strengths (Powerplay, Death) | 31 | 51.1% | 0.6971 | 0.2503 | 0.5481 |
+| **G** | + Lineup Synergy & Matchup Context (Full Model) | 36 | 52.6% | 0.6999 | 0.2534 | 0.5214 |
+
+---
+
+## 🏗️ Architecture & Model Pipeline
+
+```
+                               ┌──────────────────────────────────────────────┐
+                               │       CRONOLOGICAL DATA INGESTION            │
+                               │  1,175 Cricsheet matches (2008–2026)         │
+                               └──────────────────────┬───────────────────────┘
+                                                      │
+                                                      ▼
+                               ┌──────────────────────────────────────────────┐
+                               │         HISTORICAL STATE TRACKER             │
+                               │  Pre-match ELO · Bayesian player ratings     │
+                               │  Exponential form · Venue & H2H registries   │
+                               └──────────────────────┬───────────────────────┘
+                                                      │
+                                                      ▼
+                               ┌──────────────────────────────────────────────┐
+                               │         TEMPORAL FEATURE ENGINE              │
+                               │  Strict pre-match cutoff (PRE-XI / POST-XI)  │
+                               └──────────────────────┬───────────────────────┘
+                                                      │
+                                                      ▼
+                     ┌──────────────────────────────────────────────────────────────────┐
+                     │              EXPANDING-WINDOW INNER CV ENSEMBLE                  │
+                     │  StandardScaler (fold-isolated)                                  │
+                     │  XGBoost · LightGBM · ExtraTrees · GradientBoosting · Logistic  │
+                     │  Meta-Learner: Ridge / Logistic Stacking                         │
+                     │  Calibration: Out-of-fold Isotonic Regression                    │
+                     └────────────────────────────────┬─────────────────────────────────┘
+                                                      │
+                                                      ▼
+                               ┌──────────────────────────────────────────────┐
+                               │           EVALUATION & PREDICTION            │
+                               │  Calibrated Win Probabilities & Metrics      │
+                               └──────────────────────────────────────────────┘
+```
+
+---
+
+## 🔬 Automated Temporal Leakage Test Suite
+
+Run the automated test suite to mathematically verify feature immutability and causality:
+
 ```bash
+PYTHONPATH=. pytest tests/test_temporal_leakage.py -v
+```
+
+### Verified Test Cases:
+- `test_a_feature_immutability_future_matches_added`: Verifies that adding future matches to the dataset produces byte-for-byte identical features for historical matches.
+- `test_b_player_performance_future_modification`: Verifies that modifying a player's future match performance does not leak into prior match ratings.
+- `test_c_elo_future_mutation_resistance`: Verifies that past team ELO ratings are completely invariant to future match outcomes.
+- `test_d_venue_statistics_future_independence`: Verifies venue win rates and scoring averages only reflect matches completed prior to datetime $T$.
+- `test_e_target_match_outcome_independence`: Verifies target match winner/margin labels are inaccessible during feature creation.
+- `test_f_pre_xi_isolation`: Verifies that `PRE-XI` mode uses only lineups from matches played strictly before the target match.
+- `test_g_scaler_and_pipeline_transformation_isolation`: Verifies feature scaling and probability calibration parameters are never computed across train/test boundaries.
+- `test_h_red_team_synthetic_future_perturbation`: Injects synthetic anomalous matches with extreme results and verifies 100% feature invariance for all prior matches.
+
+---
+
+## 🚀 Quick Start & CLI Usage
+
+### Setup Virtual Environment
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
+```
+
+### Run Walk-Forward Evaluation & Ablation Study
+```bash
+# Fast evaluation of recent seasons (2024–2026)
+python fast_eval.py
+
+# Full walk-forward backtest (2016–2026) and 7-config ablation study
+python walk_forward_backtest.py --run-all --run-ablation
+```
+
+### Run Interactive Match Predictor
+```bash
 python ipl_predictor.py
 ```
 
-### Commands
-```
-> predict   — Run full match analysis (prompts for teams/venue/date)
-> teams     — List all 10 IPL teams with captains
-> venues    — List all 21 IPL venues with pitch characteristics
-> quit      — Exit
-```
-
-### Example
-```
-Team 1: MI
-Team 2: CSK
-Venue:  Wankhede
-Date:   2026-04-15
-Time:   19:30
-Match # at venue: 2
+### Run Feature Sensitivity & Transparency Audit
+```bash
+python feature_audit.py
 ```
 
 ---
 
-## Data Sources
-
-| Source | What it provides | Free? |
-|--------|-----------------|-------|
-| [Cricsheet.org](https://cricsheet.org) | 1,169 IPL matches, ball-by-ball (2008–2025) | ✅ Free, auto-downloaded |
-| [Open-Meteo API](https://open-meteo.com) | Real-time hourly weather forecast per venue | ✅ Free, no API key |
-| [ESPNcricinfo Statsguru](https://stats.espncricinfo.com) | Player career stats (IPL + T20I + List-A) | ✅ Free, scraped |
-| [iplt20.com](https://www.iplt20.com) | Current squad rosters (live scrape) | ✅ Free, scraped |
-| Cricbuzz / Howstat | Squad fallbacks when iplt20 fails | ✅ Free, scraped |
-
-All scraped data is cached in SQLite (`ipl_data/`) and refreshes every 12–24 hours.
-
----
-
-## How Each Feature Actually Works
-
-This is not a black box. Here is exactly how each input category affects the prediction:
-
-### Weather → Pitch → Score
+## 📁 Repository Structure
 
 ```
-Open-Meteo API
-     │
-     ├─ humidity > 78%  → pace_index += 0.6  (damp = seam movement)
-     ├─ temp > 36°C     → spin_index += 0.3  (baked = turn)
-     ├─ rain_prob > 50% → pace_index += 0.7  (soft pitch = swing)
-     │
-     └─ Pitch type determined → affects:
-           • batting avg multiplier per player  (turner hurts RHB)
-           • bowler economy modifier            (spin pitch drops spinner eco 10%)
-           • team batting/bowling strength      (used in ML feature vector)
-```
-
-**Proof it works**: Run `feature_audit.py` → Audit D shows win probability shifting
-3–8% across different weather scenarios for the same match.
-
-### Player Stats → Team Strength → Win Probability
-
-```
-PLAYER_DB (scraped or blended from IPL + T20I + List-A)
-     │
-     ├─ bat_avg × 0.55 + bat_sr × 0.14 = batting score per player
-     ├─ 1/bowl_eco × 7.5 × 32/bowl_avg = bowling score per bowler
-     │
-     ├─ Pitch modifier applied:
-     │     spin > 7.5 and RHB batter → batting score × 0.90
-     │     pace > 6.5 and RF bowler  → bowling score × 1.14
-     │
-     └─ Average across XI = t1_bat, t1_bowl (ML features)
-           bat_diff  = t1_bat - t2_bat
-           bowl_diff = t1_bowl - t2_bowl
-```
-
-### New Player Bootstrap (< 5 IPL seasons)
-
-Players with limited IPL data get a Bayesian blend of formats:
-- T20I stats: 0.90 batting avg discount (IPL is harder than international T20)
-- Domestic T20: 0.83 discount
-- List-A: 0.70 discount (big county/Ranji averages don't translate well)
-- Extra 14% penalty if List-A avg > 38 but < 10 IPL innings (catches inflated stats)
-- Output tagged with confidence: `HIGH / MEDIUM / LOW / VERY_LOW`
-
-### Playing XI Selection
-
-The system uses squad role keys directly — not a flat list:
-
-```
-squad["wk"]           → 1 wicketkeeper (mandatory)
-squad["batters"]      → up to 4 specialist batters
-squad["all_rounders"] → 3–4 all-rounders
-squad["bowlers"]      → 3–4 specialist bowlers
-```
-
-**Constraint enforced**: every XI must have ≥ 3 bowlers and ≥ 1 wicketkeeper. If this fails, the system pulls from the next category (e.g. extra all-rounder instead of missing bowler).
-
-Bowling projections are computed **only** for players who actually bowl — pure batters and WK-batters are excluded from bowling analysis.
-
----
-
-## Model Architecture
-
-```
-                    ┌─────────────────────────────────────┐
-                    │         INPUT FEATURES (33+)         │
-                    │  venue · weather · pitch · player    │
-                    │  stats · form · H2H · matchups       │
-                    └──────────────┬──────────────────────┘
-                                   │
-           ┌───────────────────────┼───────────────────────┐
-           ▼                       ▼                       ▼
-     XGBoost                  LightGBM               ExtraTrees
-    (boosted trees)         (fast gradient)        (randomised trees)
-           │                       │                       │
-           └───────────────────────┼───────────────────────┘
-                                   │ out-of-fold predictions
-                                   ▼
-                         Logistic Meta-learner
-                         (stacked generalization)
-                                   │
-                                   ▼
-                          Win Probability %
-                    (calibrated with isotonic scaling)
-```
-
-**Training**: Time-series cross-validation (train on 2008–N, validate on N+1). Never leaks future data. Supplemented with 1,200 synthetic samples when real data is sparse.
-
-**Realistic accuracy**: 62–68% on held-out IPL matches. The remaining 32–38% is genuine randomness — dropped catches, DRS reviews, random form days. Bookmakers operate at 65–70%.
-
----
-
-## Score Projection Calibration
-
-The old model predicted ~100 runs. The new model is calibrated to IPL 2022–2025:
-
-| Venue type | Predicted range | Real IPL range |
-|---|---|---|
-| Batting paradise (Wankhede, Chinnaswamy) | 182–210 | 175–220 |
-| Average venue | 162–185 | 155–195 |
-| Spin track (Chepauk, Nagpur) | 145–168 | 140–175 |
-
-Architecture: **65% physics model** (venue base × team strength × powerplay × death overs × dew) + **35% individual sum** (all 11 players projected separately). Bounds: min 128, max 235.
-
----
-
-## All 21 Venues Supported
-
-| Venue | City | Pace | Spin | Avg 1st inn |
-|---|---|---|---|---|
-| Wankhede Stadium | Mumbai | 7.2 | 4.5 | 178 |
-| M. Chinnaswamy Stadium | Bengaluru | 5.5 | 5.8 | 183 |
-| MA Chidambaram Stadium | Chennai | 4.2 | 8.5 | 162 |
-| Eden Gardens | Kolkata | 6.2 | 6.0 | 170 |
-| Narendra Modi Stadium | Ahmedabad | 6.5 | 6.0 | 175 |
-| Arun Jaitley Stadium | Delhi | 6.5 | 6.5 | 172 |
-| Rajiv Gandhi Stadium | Hyderabad | 6.0 | 6.5 | 176 |
-| Sawai Mansingh Stadium | Jaipur | 7.0 | 5.0 | 174 |
-| BRSABV Ekana Stadium | Lucknow | 6.8 | 5.5 | 170 |
-| PCA IS Bindra Stadium | Mohali | 7.5 | 4.5 | 168 |
-| HPCA Stadium | Dharamsala | 7.8 | 4.0 | 162 |
-| Holkar Stadium | Indore | 6.0 | 6.5 | 180 |
-| + 9 more (Vizag, Pune, Ranchi, Raipur, Cuttack, Nagpur, Kanpur, DY Patil, Brabourne) | | | | |
-
----
-
-## File Structure
-
-```
-ipl_predictor.py          ← Main system (run this)
-ipl_stats_module.py       ← Live squad + player stats scraper
-ipl_fixes.py              ← IPL 2026 squad data + score model fixes
-snippet_1_squad_scraper.py   ← Live squad scraper (priority: 3 sources)
-snippet_2_stats_scraper.py   ← ESPNcricinfo player stats scraper
-snippet_3_score_model.py     ← Calibrated T20 score projection model
-snippet_4_accuracy_features.py ← ELO, form, phase bowling, matchup matrix
-snippet_5_model_accuracy.py  ← Backtesting + accuracy evaluator
-feature_audit.py             ← Prove all features are working correctly
-vscode_prompt_xi_fix.md      ← Paste into VS Code AI to fix the XI bug
-requirements.txt
-ipl_data/                 ← Auto-created: Cricsheet CSVs + SQLite caches
-ipl_models/               ← Auto-created: trained model pickle
+├── ipl_temporal.py             # Canonical temporal data structures, state tracker & feature engine
+├── ipl_models_pipeline.py      # Leak-free ensemble, expanding-window CV, calibration & metrics
+├── walk_forward_backtest.py    # Walk-forward blind evaluator, ablation suite & markdown reporter
+├── fast_eval.py                # Fast leak-free evaluator for recent seasons
+├── feature_audit.py            # Feature sensitivity, transparency & attribution audit
+├── ipl_predictor.py            # Interactive CLI, pitch modeling, score & player projections
+├── ipl_stats_module.py         # Squad rosters, fallbacks & player database
+├── tests/
+│   └── test_temporal_leakage.py# 8 automated leakage test cases
+├── reports/
+│   ├── walk_forward_results.csv# Season-by-season walk-forward performance
+│   ├── match_predictions.csv   # Match-by-match predictions with full audit trail
+│   ├── WALK_FORWARD_REPORT.md  # Detailed walk-forward analysis & calibration curves
+│   ├── 2026_BLIND_TEST.md      # IPL 2026 true holdout evaluation report
+│   └── ABLATION_STUDY.md       # 7-configuration feature ablation study
+├── docs/
+│   └── LEAKAGE_AUDIT.md        # Complete forensic leakage audit document
+├── ipl_data/cricsheet/         # 1,175 raw Cricsheet IPL match CSVs (2008–2026)
+└── README.md                   # System documentation & evaluation benchmarks
 ```
 
 ---
 
-## Running the Feature Audit
+## 📜 Scientific Integrity & Limitations
 
-To verify the system is not just returning hardcoded values:
-
-```python
-from ipl_predictor import setup_system
-from feature_audit import FeatureAudit
-
-analyzer, squads = setup_system()
-audit = FeatureAudit(analyzer)
-audit.run_full_audit("MI", "CSK", "Wankhede Stadium")
-```
-
-This runs 5 audits:
-1. Shows every computed feature value with its live data source
-2. Changes one input at a time and shows the prediction shift
-3. Attribution — which features drove this specific prediction
-4. Weather scenarios — same match in 4 weather conditions, different predictions
-5. XI validation — confirms bowlers/batters are correctly separated
-
----
-
-## Known Limitations
-
-- **Squad data**: IPL 2026 post-auction rosters are hardcoded as fallback. Live scraping hits iplt20.com → ESPNcricinfo → Howstat in order; Cloudflare blocks these intermittently.
-- **Player stats**: Career averages only. No in-season form updates unless you run the stats scraper nightly.
-- **New players**: Players with < 10 IPL innings get `VERY_LOW` confidence stats — predictions involving them are less reliable.
-- **Score prediction**: ±22 runs RMSE is realistic for T20. No model predicts exact scores.
-- **Injuries**: No live injury feed. If a key player is ruled out after you run the prediction, it won't reflect that.
-
----
-
-## Dependencies
-
-```
-pandas · numpy · scikit-learn · xgboost · lightgbm
-requests · beautifulsoup4 · lxml · tqdm · joblib
-scipy · tabulate · colorama
-```
-
-All installed automatically on first run via `pip`.
+1. **Realistic Accuracy Bounds**: True pre-match IPL forecasting accuracy legitimately operates in the **50–65% range**. Cricket matches possess substantial inherent stochasticity (toss outcome, weather variations, dropped catches, umpire calls). Any claim of >75% pre-match accuracy in professional T20 cricket is indicative of temporal leakage.
+2. **Pre-XI Uncertainty**: Pre-match predictions rely on the previous match playing XI. Sudden tactical lineup rotations or late injuries announced at toss time cannot be foreseen prior to match announcement.
+3. **Score Projections**: T20 score prediction standard error is approximately $\pm 22$ runs due to boundary variance and death-over acceleration.
