@@ -13,8 +13,8 @@
 - **Correct Predictions:** **3**
 - **Incorrect Predictions:** **3**
 - **Accuracy:** **50.0%**
-- **Log Loss:** **0.7180**
-- **Brier Score:** **0.2624**
+- **Log Loss:** **0.7014**
+- **Brier Score:** **0.2541**
 - **ROC-AUC:** **0.4000**
 
 ---
@@ -23,12 +23,12 @@
 
 |   Match ID | Date       | Fixture    | Venue                                                                 | Predicted Winner (Prob)   | Actual Winner   | Correct?   |   T1 XI Source |   T2 XI Source |
 |------------|------------|------------|-----------------------------------------------------------------------|---------------------------|-----------------|------------|----------------|----------------|
-|    1527674 | 2026-03-28 | SRH vs RCB | M Chinnaswamy Stadium, Bengaluru                                      | SRH (54.0% T1)            | RCB             | NO         |        1473505 |        1473511 |
-|    1527675 | 2026-03-29 | KKR vs MI  | Wankhede Stadium, Mumbai                                              | KKR (54.0% T1)            | MI              | NO         |        1473505 |        1473510 |
-|    1527676 | 2026-03-30 | CSK vs RR  | Barsapara Cricket Stadium, Guwahati                                   | RR (48.7% T1)             | RR              | YES        |        1473504 |        1473500 |
-|    1527677 | 2026-03-31 | GT vs PBKS | Maharaja Yadavindra Singh International Cricket Stadium, Mullanpur    | PBKS (48.7% T1)           | PBKS            | YES        |        1473509 |        1473511 |
-|    1527678 | 2026-04-01 | LSG vs DC  | Bharat Ratna Shri Atal Bihari Vajpayee Ekana Cricket Stadium, Lucknow | LSG (54.0% T1)            | DC              | NO         |        1473507 |        1485779 |
-|    1527679 | 2026-04-02 | SRH vs KKR | Eden Gardens, Kolkata                                                 | SRH (52.6% T1)            | SRH             | YES        |        1527674 |        1527675 |
+|    1527674 | 2026-03-28 | SRH vs RCB | M Chinnaswamy Stadium, Bengaluru                                      | SRH (53.4% T1)            | RCB             | NO         |        1473505 |        1473511 |
+|    1527675 | 2026-03-29 | KKR vs MI  | Wankhede Stadium, Mumbai                                              | KKR (53.4% T1)            | MI              | NO         |        1473505 |        1473510 |
+|    1527676 | 2026-03-30 | CSK vs RR  | Barsapara Cricket Stadium, Guwahati                                   | RR (45.5% T1)             | RR              | YES        |        1473504 |        1473500 |
+|    1527677 | 2026-03-31 | GT vs PBKS | Maharaja Yadavindra Singh International Cricket Stadium, Mullanpur    | PBKS (45.5% T1)           | PBKS            | YES        |        1473509 |        1473511 |
+|    1527678 | 2026-04-01 | LSG vs DC  | Bharat Ratna Shri Atal Bihari Vajpayee Ekana Cricket Stadium, Lucknow | LSG (54.9% T1)            | DC              | NO         |        1473507 |        1485779 |
+|    1527679 | 2026-04-02 | SRH vs KKR | Eden Gardens, Kolkata                                                 | SRH (51.1% T1)            | SRH             | YES        |        1527674 |        1527675 |
 
 ---
 

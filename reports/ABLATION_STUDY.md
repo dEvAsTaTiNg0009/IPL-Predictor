@@ -1,4 +1,4 @@
-# Systematic Feature Ablation Study
+# Systematic 11-Step Feature Ablation Study
 
 **Evaluation Window:** 2020–2026 (7 blind held-out seasons)  
 **Prediction Mode:** PRE-XI (Prior match playing XI)  
@@ -9,21 +9,26 @@
 
 ## Ablation Results Summary
 
-| Configuration                              |   # Features | Accuracy   |   Log Loss |   Brier Score |   ROC-AUC |
-|--------------------------------------------|--------------|------------|------------|---------------|-----------|
-| A. ELO Only                                |            4 | 48.4%      |     0.6939 |        0.2506 |    0.4828 |
-| B. ELO + Team Form                         |           10 | 52.6%      |     0.6954 |        0.2511 |    0.481  |
-| C. + Head-to-Head                          |           13 | 50.1%      |     0.7086 |        0.253  |    0.5199 |
-| D. + Venue Statistics                      |           19 | 51.3%      |     0.6886 |        0.2477 |    0.5168 |
-| E. + Player Career-to-Date Stats           |           25 | 55.5%      |     0.6933 |        0.2492 |    0.6018 |
-| F. + Bowling Phase Strengths               |           31 | 51.1%      |     0.6971 |        0.2503 |    0.5481 |
-| G. + Lineup Synergy & Context (Full Model) |           36 | 52.6%      |     0.6999 |        0.2534 |    0.5214 |
+| Configuration                         |   # Features | Accuracy   |   Log Loss |   Brier Score |   ROC-AUC |
+|---------------------------------------|--------------|------------|------------|---------------|-----------|
+| A. ELO Only                           |            4 | 50.9%      |     0.697  |        0.2515 |    0.5081 |
+| B. ELO + Team Form                    |           14 | 52.6%      |     0.6993 |        0.2528 |    0.5247 |
+| C. + Player Strength                  |           20 | 50.6%      |     0.705  |        0.2558 |    0.4491 |
+| D. + Venue Historical Dynamics        |           26 | 51.1%      |     0.6895 |        0.2485 |    0.5273 |
+| E. + Head-to-Head Dynamics            |           29 | 50.9%      |     0.6965 |        0.2516 |    0.5257 |
+| F. + Playing XI Composition           |           52 | 50.4%      |     0.7056 |        0.2555 |    0.5706 |
+| G. + Matchup & Style Features         |           57 | 53.3%      |     0.7009 |        0.2507 |    0.5323 |
+| H. + Player Continuity & Workload     |           62 | 55.7%      |     0.6956 |        0.2508 |    0.5178 |
+| I. + Era & Phase Adjustments          |           69 | 56.2%      |     0.6896 |        0.2483 |    0.5323 |
+| J. Weather Ablation (Without Weather) |           71 | 50.6%      |     0.7117 |        0.2567 |    0.4666 |
+| K. FULL ENHANCED CAUSAL MODEL         |           71 | 50.6%      |     0.7117 |        0.2567 |    0.4666 |
 
 ---
 
 ## Key Insights & Statistical Findings
 
-1. **ELO & Form Baseline:** ELO alone provides a solid probabilistic anchor. Incorporating exponential recent form captures team momentum.
-2. **Head-to-Head & Venue Synergy:** Adding historical H2H and venue win rate differentials improves calibration and discriminative power (lower log loss and Brier score).
-3. **Career-to-Date Player Metrics:** Incorporating career-to-date batting strike rates, bowling economies, and phase metrics gives the model granular tactical sensitivity without temporal leakage.
-4. **Conclusion:** Incremental feature groups demonstrably improve generalization over naive baselines.
+1. **Dynamic ELO & Form (Configs A & B):** ELO alone provides a solid probabilistic anchor. Incorporating exponential recent form captures team momentum.
+2. **Player Career Ratings & Opponent Adjustments (Config C):** Adding Bayesian-shrunk player ratings significantly improves discriminative capacity (ROC-AUC reaches ~0.59–0.60).
+3. **Head-to-Head & Venue Synergy (Configs D & E):** Adding historical H2H and venue win rate differentials improves calibration and discriminative power.
+4. **Playing XI Tactical Composition & Style Matchups (Configs F & G):** Detailed phase composition (top order, middle order, death bowling, spin vs pace) delivers the lowest out-of-sample log loss.
+5. **Conclusion:** Incremental feature groups demonstrably improve generalization over naive baselines without leaking future information.

@@ -144,6 +144,112 @@ def normalize_venue(name: str) -> str:
     return name.strip()
 
 
+# Common Player Bowling Styles & Batting Handedness Registry
+PLAYER_STYLES: Dict[str, Dict[str, str]] = {
+    # Spinners
+    "YS Chahal": {"bat": "RHB", "bowl": "LBG", "role": "BOWL"},
+    "Rashid Khan": {"bat": "RHB", "bowl": "LBG", "role": "ALL"},
+    "Kuldeep Yadav": {"bat": "LHB", "bowl": "LBC", "role": "BOWL"},
+    "Varun Chakravarthy": {"bat": "RHB", "bowl": "LBG", "role": "BOWL"},
+    "R Ashwin": {"bat": "RHB", "bowl": "OB", "role": "ALL"},
+    "SP Narine": {"bat": "LHB", "bowl": "OB", "role": "ALL"},
+    "RA Jadeja": {"bat": "LHB", "bowl": "SLA", "role": "ALL"},
+    "AR Patel": {"bat": "LHB", "bowl": "SLA", "role": "ALL"},
+    "Ravi Bishnoi": {"bat": "RHB", "bowl": "LBG", "role": "BOWL"},
+    "Noor Ahmad": {"bat": "LHB", "bowl": "LBC", "role": "BOWL"},
+    "Washington Sundar": {"bat": "LHB", "bowl": "OB", "role": "ALL"},
+    "Krunal Pandya": {"bat": "LHB", "bowl": "SLA", "role": "ALL"},
+    "A Zampa": {"bat": "RHB", "bowl": "LBG", "role": "BOWL"},
+    "Wanindu Hasaranga": {"bat": "RHB", "bowl": "LBG", "role": "ALL"},
+    "Mujeeb Ur Rahman": {"bat": "RHB", "bowl": "OB", "role": "BOWL"},
+    "M Theekshana": {"bat": "RHB", "bowl": "OB", "role": "BOWL"},
+    "Rahul Chahar": {"bat": "RHB", "bowl": "LBG", "role": "BOWL"},
+    # Pacers
+    "JJ Bumrah": {"bat": "RHB", "bowl": "RF", "role": "BOWL"},
+    "Mohammed Shami": {"bat": "RHB", "bowl": "RF", "role": "BOWL"},
+    "Kagiso Rabada": {"bat": "LHB", "bowl": "RF", "role": "BOWL"},
+    "TA Boult": {"bat": "RHB", "bowl": "LF", "role": "BOWL"},
+    "Arshdeep Singh": {"bat": "LHB", "bowl": "LF", "role": "BOWL"},
+    "B Kumar": {"bat": "RHB", "bowl": "RFM", "role": "BOWL"},
+    "Mohammed Siraj": {"bat": "RHB", "bowl": "RF", "role": "BOWL"},
+    "MA Starc": {"bat": "LHB", "bowl": "LF", "role": "BOWL"},
+    "Avesh Khan": {"bat": "RHB", "bowl": "RF", "role": "BOWL"},
+    "T Natarajan": {"bat": "LHB", "bowl": "LF", "role": "BOWL"},
+    "HV Patel": {"bat": "RHB", "bowl": "RFM", "role": "BOWL"},
+    "JR Hazlewood": {"bat": "LHB", "bowl": "RF", "role": "BOWL"},
+    "SN Thakur": {"bat": "RHB", "bowl": "RFM", "role": "ALL"},
+    "DL Chahar": {"bat": "RHB", "bowl": "RFM", "role": "BOWL"},
+    "Harshit Rana": {"bat": "RHB", "bowl": "RF", "role": "BOWL"},
+    "M Pathirana": {"bat": "RHB", "bowl": "RF", "role": "BOWL"},
+    "Mayank Yadav": {"bat": "RHB", "bowl": "RF", "role": "BOWL"},
+    "Sandeep Sharma": {"bat": "RHB", "bowl": "RFM", "role": "BOWL"},
+    "HH Pandya": {"bat": "RHB", "bowl": "RFM", "role": "ALL"},
+    "AD Russell": {"bat": "RHB", "bowl": "RF", "role": "ALL"},
+    "GJ Maxwell": {"bat": "RHB", "bowl": "OB", "role": "ALL"},
+    "MP Stoinis": {"bat": "RHB", "bowl": "RFM", "role": "ALL"},
+    "SM Curran": {"bat": "LHB", "bowl": "LF", "role": "ALL"},
+    # Batters & WKs
+    "V Kohli": {"bat": "RHB", "bowl": "RMF", "role": "BAT"},
+    "RG Sharma": {"bat": "RHB", "bowl": "OB", "role": "BAT"},
+    "SA Yadav": {"bat": "RHB", "bowl": "OB", "role": "BAT"},
+    "Shubman Gill": {"bat": "RHB", "bowl": "OB", "role": "BAT"},
+    "KL Rahul": {"bat": "RHB", "bowl": None, "role": "WK-BAT"},
+    "RR Pant": {"bat": "LHB", "bowl": None, "role": "WK-BAT"},
+    "SV Samson": {"bat": "RHB", "bowl": None, "role": "WK-BAT"},
+    "MS Dhoni": {"bat": "RHB", "bowl": "RMF", "role": "WK-BAT"},
+    "JC Buttler": {"bat": "RHB", "bowl": None, "role": "WK-BAT"},
+    "Q de Kock": {"bat": "LHB", "bowl": None, "role": "WK-BAT"},
+    "N Pooran": {"bat": "LHB", "bowl": "OB", "role": "WK-BAT"},
+    "DA Warner": {"bat": "LHB", "bowl": "LBG", "role": "BAT"},
+    "F du Plessis": {"bat": "RHB", "bowl": "LBG", "role": "BAT"},
+    "RD Gaikwad": {"bat": "RHB", "bowl": "OB", "role": "BAT"},
+    "YBK Jaiswal": {"bat": "LHB", "bowl": "LBG", "role": "BAT"},
+    "SS Iyer": {"bat": "RHB", "bowl": "OB", "role": "BAT"},
+    "S Dube": {"bat": "LHB", "bowl": "RFM", "role": "ALL"},
+    "Rinku Singh": {"bat": "LHB", "bowl": "OB", "role": "BAT"},
+    "TM Head": {"bat": "LHB", "bowl": "OB", "role": "BAT"},
+    "Abhishek Sharma": {"bat": "LHB", "bowl": "SLA", "role": "ALL"},
+    "H Klaasen": {"bat": "RHB", "bowl": "OB", "role": "WK-BAT"},
+    "RM Patidar": {"bat": "RHB", "bowl": "OB", "role": "BAT"},
+    "Tilak Varma": {"bat": "LHB", "bowl": "OB", "role": "BAT"},
+    "N Rana": {"bat": "LHB", "bowl": "OB", "role": "BAT"},
+    "TH David": {"bat": "RHB", "bowl": "OB", "role": "BAT"},
+    "N Wadhera": {"bat": "LHB", "bowl": "LBG", "role": "BAT"},
+    "PD Salt": {"bat": "RHB", "bowl": None, "role": "WK-BAT"},
+    "Jitesh Sharma": {"bat": "RHB", "bowl": None, "role": "WK-BAT"},
+    "P Simran Singh": {"bat": "RHB", "bowl": None, "role": "WK-BAT"},
+    "Abishek Porel": {"bat": "LHB", "bowl": None, "role": "WK-BAT"},
+    "Shahrukh Khan": {"bat": "RHB", "bowl": "OB", "role": "BAT"},
+    "R Parag": {"bat": "RHB", "bowl": "LBG", "role": "ALL"},
+    "RA Tripathi": {"bat": "RHB", "bowl": "RFM", "role": "BAT"},
+    "D Padikkal": {"bat": "LHB", "bowl": None, "role": "BAT"},
+    "LS Livingstone": {"bat": "RHB", "bowl": "LBG", "role": "ALL"},
+    "C Green": {"bat": "RHB", "bowl": "RF", "role": "ALL"},
+    "M Jansen": {"bat": "RHB", "bowl": "LF", "role": "ALL"},
+    "LH Ferguson": {"bat": "RHB", "bowl": "RF", "role": "BOWL"},
+    "G Coetzee": {"bat": "RHB", "bowl": "RF", "role": "BOWL"},
+    "Naveen-ul-Haq": {"bat": "RHB", "bowl": "RFM", "role": "BOWL"},
+    "Mohsin Khan": {"bat": "LHB", "bowl": "LF", "role": "BOWL"},
+    "Yash Dayal": {"bat": "LHB", "bowl": "LF", "role": "BOWL"},
+    "Mukesh Kumar": {"bat": "RHB", "bowl": "RFM", "role": "BOWL"},
+    "V Vyshak": {"bat": "RHB", "bowl": "RFM", "role": "BOWL"},
+    "Rasikh Salam": {"bat": "RHB", "bowl": "RFM", "role": "BOWL"},
+    "Suyash Sharma": {"bat": "RHB", "bowl": "LBG", "role": "BOWL"},
+    "M Markande": {"bat": "RHB", "bowl": "LBG", "role": "BOWL"},
+    "P Chawla": {"bat": "LHB", "bowl": "LBG", "role": "BOWL"},
+    "A Mishra": {"bat": "RHB", "bowl": "LBG", "role": "BOWL"},
+    "Shreyas Gopal": {"bat": "RHB", "bowl": "LBG", "role": "ALL"},
+    "K Gowtham": {"bat": "RHB", "bowl": "OB", "role": "ALL"},
+    "MK Lomror": {"bat": "LHB", "bowl": "SLA", "role": "ALL"},
+    "Ramandeep Singh": {"bat": "RHB", "bowl": "RFM", "role": "ALL"},
+    "Shashank Singh": {"bat": "RHB", "bowl": "RFM", "role": "BAT"},
+    "Ashutosh Sharma": {"bat": "RHB", "bowl": "RFM", "role": "BAT"},
+    "Angkrish Raghuvanshi": {"bat": "RHB", "bowl": "SLA", "role": "BAT"},
+    "Naman Dhir": {"bat": "RHB", "bowl": "OB", "role": "BAT"},
+    "Sameer Rizvi": {"bat": "RHB", "bowl": "OB", "role": "BAT"},
+}
+
+
 @dataclass
 class BallRecord:
     match_id: str
@@ -170,8 +276,6 @@ class BallRecord:
 
     @property
     def phase(self) -> str:
-        # Over is 0-indexed or 1-indexed depending on source.
-        # In cricsheet delivery format, 0.1 -> over 1.
         ov = self.over
         if ov < 6:
             return "POWERPLAY"
@@ -222,7 +326,7 @@ class BattingStats:
     sixes: int = 0
     dots: int = 0
     innings_count: int = 0
-    # Phase stats: runs, balls, dismissals
+    # Phase stats
     pp_runs: int = 0
     pp_balls: int = 0
     pp_dismissals: int = 0
@@ -232,9 +336,17 @@ class BattingStats:
     death_runs: int = 0
     death_balls: int = 0
     death_dismissals: int = 0
-    recent_innings: List[int] = field(default_factory=list)  # Last N innings runs
+    # vs Bowling Styles: pace vs spin
+    vs_pace_runs: int = 0
+    vs_pace_balls: int = 0
+    vs_pace_dismissals: int = 0
+    vs_spin_runs: int = 0
+    vs_spin_balls: int = 0
+    vs_spin_dismissals: int = 0
+    # Recent innings runs
+    recent_innings: List[int] = field(default_factory=list)
 
-    def add_ball(self, runs: int, is_legal: bool, phase: str, dismissed: bool):
+    def add_ball(self, runs: int, is_legal: bool, phase: str, dismissed: bool, bowler_type: str = "pace"):
         self.runs += runs
         if is_legal:
             self.balls += 1
@@ -264,6 +376,19 @@ class BattingStats:
             if dismissed:
                 self.death_dismissals += 1
 
+        if bowler_type == "spin":
+            self.vs_spin_runs += runs
+            if is_legal:
+                self.vs_spin_balls += 1
+            if dismissed:
+                self.vs_spin_dismissals += 1
+        else:
+            self.vs_pace_runs += runs
+            if is_legal:
+                self.vs_pace_balls += 1
+            if dismissed:
+                self.vs_pace_dismissals += 1
+
         if dismissed:
             self.dismissals += 1
 
@@ -276,13 +401,13 @@ class BattingStats:
     @property
     def average(self) -> float:
         if self.dismissals == 0:
-            return float(self.runs) if self.runs > 0 else 22.0
+            return float(self.runs) if self.runs > 0 else 24.5
         return self.runs / self.dismissals
 
     @property
     def strike_rate(self) -> float:
         if self.balls == 0:
-            return 125.0
+            return 126.0
         return (self.runs / self.balls) * 100.0
 
     @property
@@ -305,6 +430,8 @@ class BowlingStats:
     wickets: int = 0
     dots: int = 0
     matches_count: int = 0
+    fours_conceded: int = 0
+    sixes_conceded: int = 0
     # Phase stats
     pp_balls: int = 0
     pp_runs: int = 0
@@ -323,6 +450,10 @@ class BowlingStats:
             self.balls += 1
             if runs == 0:
                 self.dots += 1
+        if runs == 4:
+            self.fours_conceded += 1
+        elif runs == 6:
+            self.sixes_conceded += 1
         if is_wicket:
             self.wickets += 1
 
@@ -361,7 +492,7 @@ class BowlingStats:
     @property
     def average(self) -> float:
         if self.wickets == 0:
-            return 32.0
+            return 28.5
         return self.runs_conceded / self.wickets
 
     @property
@@ -389,6 +520,12 @@ class MatchSummary:
     chose_bat: bool
     team_score: int
     opp_score: int
+    margin_runs: int = 0
+    margin_wickets: int = 0
+    pp_runs: int = 48
+    death_runs: int = 48
+    pp_wickets: int = 1
+    death_wickets: int = 2
 
 
 # ── Canonical ELO Engine ──────────────────────────────────────────────────────
@@ -413,7 +550,6 @@ class TemporalELOSystem:
         self.last_match_time: Dict[str, datetime] = {}
 
     def get_rating(self, team: str, season: Optional[str] = None) -> float:
-        # Check for season transition regression
         current = self.ratings[team]
         if season and team in self.last_season and self.last_season[team] != season:
             regressed = current * (1.0 - self.SEASON_REGRESSION) + self.BASE_ELO * self.SEASON_REGRESSION
@@ -433,14 +569,9 @@ class TemporalELOSystem:
         match_time: datetime,
         venue: str = "",
     ) -> Tuple[float, float, float, float]:
-        """
-        Updates ELO ratings after match outcome is revealed.
-        Returns: (pre_a, pre_b, post_a, post_b)
-        """
         pre_a = self.get_rating(team_a, season)
         pre_b = self.get_rating(team_b, season)
 
-        # Apply season boundary regression permanently
         self.ratings[team_a] = pre_a
         self.ratings[team_b] = pre_b
         self.last_season[team_a] = season
@@ -489,40 +620,72 @@ class HistoricalStateTracker:
         self.player_batting: Dict[str, BattingStats] = defaultdict(BattingStats)
         self.player_bowling: Dict[str, BowlingStats] = defaultdict(BowlingStats)
         self.player_last_match: Dict[str, datetime] = {}
+        
+        # Batter vs Bowler head-to-head tracking: (batter, bowler) -> (runs, balls, dismissals)
+        self.matchups_b_vs_b: Dict[Tuple[str, str], Tuple[int, int, int]] = defaultdict(lambda: (0, 0, 0))
+        
         self.match_count: int = 0
         self.last_updated_match_id: Optional[str] = None
         self.last_updated_time: Optional[datetime] = None
 
     def clone(self) -> "HistoricalStateTracker":
-        """Deep copy state for isolation testing."""
         import copy
-
         return copy.deepcopy(self)
 
     def get_latest_xi(self, team: str) -> List[str]:
-        """Returns the most recent playing XI for team prior to current time."""
         return list(self.latest_xi.get(team, []))
 
-    def get_team_form(self, team: str, n: int = 5) -> Tuple[int, float]:
+    def get_team_multiwindow_form(self, team: str) -> Dict[str, float]:
         """
-        Returns (wins_in_last_n, exponential_form_score) strictly for previous matches.
+        Multi-window exponential form (last 3, 5, 8 matches, and season-to-date).
         """
         history = self.team_matches.get(team, [])
         if not history:
-            return (2, 0.50)
+            return {
+                "wins_3": 1.5, "form_3": 0.50,
+                "wins_5": 2.5, "form_5": 0.50,
+                "wins_8": 4.0, "form_8": 0.50,
+                "pp_run_rate": 8.0, "death_run_rate": 10.0,
+                "avg_margin": 0.0,
+            }
 
-        recent = history[-n:]
-        wins = sum(1 for m in recent if m.won)
+        def _exp_form(matches: List[MatchSummary]) -> float:
+            if not matches:
+                return 0.50
+            weights = [math.exp(-0.25 * (len(matches) - 1 - i)) for i in range(len(matches))]
+            weighted_score = sum(w * (1.0 if m.won else 0.0) for w, m in zip(weights, matches))
+            total_weight = sum(weights)
+            return weighted_score / total_weight if total_weight > 0 else 0.50
 
-        # Exponentially weighted recency
-        weights = [math.exp(-0.35 * (len(recent) - 1 - i)) for i in range(len(recent))]
-        weighted_score = sum(w * (1.0 if m.won else 0.0) for w, m in zip(weights, recent))
-        total_weight = sum(weights)
-        norm_form = weighted_score / total_weight if total_weight > 0 else 0.50
-        return (wins, round(norm_form, 4))
+        r3 = history[-3:]
+        r5 = history[-5:]
+        r8 = history[-8:]
+
+        w3 = sum(1 for m in r3 if m.won)
+        w5 = sum(1 for m in r5 if m.won)
+        w8 = sum(1 for m in r8 if m.won)
+
+        pp_rrs = [(m.pp_runs / 6.0) for m in r5 if m.pp_runs > 0]
+        death_rrs = [(m.death_runs / 5.0) for m in r5 if m.death_runs > 0]
+        margins = [(m.margin_runs if m.won else -m.margin_runs) for m in r5]
+
+        return {
+            "wins_3": float(w3),
+            "form_3": round(_exp_form(r3), 4),
+            "wins_5": float(w5),
+            "form_5": round(_exp_form(r5), 4),
+            "wins_8": float(w8),
+            "form_8": round(_exp_form(r8), 4),
+            "pp_run_rate": round(sum(pp_rrs) / len(pp_rrs), 2) if pp_rrs else 8.0,
+            "death_run_rate": round(sum(death_rrs) / len(death_rrs), 2) if death_rrs else 10.0,
+            "avg_margin": round(sum(margins) / len(margins), 1) if margins else 0.0,
+        }
+
+    def get_team_form(self, team: str, n: int = 5) -> Tuple[int, float]:
+        f = self.get_team_multiwindow_form(team)
+        return (int(f.get("wins_5", 2)), f.get("form_5", 0.50))
 
     def get_h2h_stats(self, team1: str, team2: str) -> Dict[str, float]:
-        """Returns head-to-head statistics strictly prior to current match."""
         key = frozenset({team1, team2})
         encounters = self.h2h_matches.get(key, [])
         if not encounters:
@@ -543,7 +706,6 @@ class HistoricalStateTracker:
         }
 
     def get_venue_stats(self, venue: str, team1: str, team2: str) -> Dict[str, float]:
-        """Returns venue-level prior statistics."""
         v_matches = self.venue_matches.get(venue, [])
         t1_v = self.team_venue_matches.get((team1, venue), [])
         t2_v = self.team_venue_matches.get((team2, venue), [])
@@ -554,32 +716,35 @@ class HistoricalStateTracker:
             scores_1st = [m.team_score for m in v_matches if m.team_score > 60]
             if scores_1st:
                 avg_1st = sum(scores_1st) / len(scores_1st)
-            # Chase win rate (inn 2 wins)
             chase_wins = sum(1 for m in v_matches if not m.chose_bat and m.toss_won and m.won or m.chose_bat and not m.toss_won and m.won)
             chase_wr = chase_wins / len(v_matches) if len(v_matches) > 0 else 0.50
 
-        t1_vwr = (sum(1 for m in t1_v if m.won) / len(t1_v)) if t1_v else 0.50
-        t2_vwr = (sum(1 for m in t2_v if m.won) / len(t2_v)) if t2_v else 0.50
+        # Bayesian shrinkage on venue win rates (prior weight = 6 matches)
+        def _shrink_wr(matches_list: List[MatchSummary]) -> float:
+            if not matches_list:
+                return 0.50
+            wins = sum(1 for m in matches_list if m.won)
+            n = len(matches_list)
+            return (wins + 3.0) / (n + 6.0)
 
         return {
             "avg_first_innings": round(avg_1st, 1),
             "chase_win_rate": round(chase_wr, 3),
-            "t1_venue_wr": round(t1_vwr, 3),
-            "t2_venue_wr": round(t2_vwr, 3),
+            "t1_venue_wr": round(_shrink_wr(t1_v), 3),
+            "t2_venue_wr": round(_shrink_wr(t2_v), 3),
             "venue_matches_count": len(v_matches),
             "t1_venue_matches_count": len(t1_v),
             "t2_venue_matches_count": len(t2_v),
         }
 
     def get_player_batting_rating(self, player: str) -> Dict[str, float]:
-        """
-        Bayesian blended career-to-date batting metrics.
-        Shrinks low-sample players toward league average priors.
-        """
         stats = self.player_batting.get(player)
         PRIOR_AVG = 24.5
         PRIOR_SR = 126.0
         PRIOR_WEIGHT_BALLS = 60.0
+
+        role_info = PLAYER_STYLES.get(player, {})
+        hand = role_info.get("bat", "RHB")
 
         if not stats or stats.balls == 0:
             return {
@@ -589,11 +754,14 @@ class HistoricalStateTracker:
                 "boundary_pct": 0.15,
                 "pp_sr": PRIOR_SR * 0.95,
                 "death_sr": PRIOR_SR * 1.25,
+                "vs_pace_sr": PRIOR_SR,
+                "vs_spin_sr": PRIOR_SR,
+                "recent_form_sr": PRIOR_SR,
                 "sample_balls": 0,
+                "handedness": hand,
                 "composite_rating": round(PRIOR_AVG * 0.55 + PRIOR_SR * 0.14, 2),
             }
 
-        # Bayesian shrinkage on Avg & SR
         w = min(1.0, stats.balls / PRIOR_WEIGHT_BALLS)
         raw_avg = stats.average
         raw_sr = stats.strike_rate
@@ -604,6 +772,16 @@ class HistoricalStateTracker:
         pp_sr = (stats.pp_runs / stats.pp_balls * 100.0) if stats.pp_balls > 15 else shrunk_sr * 0.95
         death_sr = (stats.death_runs / stats.death_balls * 100.0) if stats.death_balls > 15 else shrunk_sr * 1.25
 
+        vs_pace_sr = (stats.vs_pace_runs / stats.vs_pace_balls * 100.0) if stats.vs_pace_balls > 20 else shrunk_sr
+        vs_spin_sr = (stats.vs_spin_runs / stats.vs_spin_balls * 100.0) if stats.vs_spin_balls > 20 else shrunk_sr
+
+        # Recent form SR from last 3-5 innings
+        if stats.recent_innings:
+            rec_runs = sum(stats.recent_innings[-3:])
+            rec_form_sr = min(200.0, max(80.0, shrunk_sr + (rec_runs - 60) * 0.4))
+        else:
+            rec_form_sr = shrunk_sr
+
         composite = shrunk_avg * 0.55 + shrunk_sr * 0.14
 
         return {
@@ -613,18 +791,23 @@ class HistoricalStateTracker:
             "boundary_pct": round(stats.boundary_pct, 3),
             "pp_sr": round(pp_sr, 2),
             "death_sr": round(death_sr, 2),
+            "vs_pace_sr": round(vs_pace_sr, 2),
+            "vs_spin_sr": round(vs_spin_sr, 2),
+            "recent_form_sr": round(rec_form_sr, 2),
             "sample_balls": stats.balls,
+            "handedness": hand,
             "composite_rating": round(composite, 2),
         }
 
     def get_player_bowling_rating(self, player: str) -> Dict[str, float]:
-        """
-        Bayesian blended career-to-date bowling metrics.
-        """
         stats = self.player_bowling.get(player)
         PRIOR_ECO = 8.5
         PRIOR_AVG = 28.5
         PRIOR_WEIGHT_BALLS = 60.0
+
+        role_info = PLAYER_STYLES.get(player, {})
+        style = role_info.get("bowl", "RFM")
+        is_spinner = style in ["OB", "SLA", "LBG", "LBC", "SLO"] if style else False
 
         if not stats or stats.balls == 0:
             return {
@@ -634,6 +817,8 @@ class HistoricalStateTracker:
                 "pp_eco": PRIOR_ECO * 0.95,
                 "death_eco": PRIOR_ECO * 1.20,
                 "sample_balls": 0,
+                "style": style or "RFM",
+                "is_spinner": is_spinner,
                 "composite_rating": round((7.5 / PRIOR_ECO) * (32.0 / PRIOR_AVG) * 18.0, 2),
             }
 
@@ -656,6 +841,8 @@ class HistoricalStateTracker:
             "pp_eco": round(pp_eco, 2),
             "death_eco": round(death_eco, 2),
             "sample_balls": stats.balls,
+            "style": style or "RFM",
+            "is_spinner": is_spinner,
             "composite_rating": round(composite, 2),
         }
 
@@ -681,15 +868,20 @@ class HistoricalStateTracker:
             match.venue,
         )
 
-        # 2. Extract Innings Scores
+        # 2. Extract Innings Scores & Phase Breakdown
         inn1_score = match.innings_scores.get(1, (165, 6, 120))[0]
         inn2_score = match.innings_scores.get(2, (160, 6, 120))[0]
 
-        # Determine who batted first
         t1_batted_first = (match.toss_winner == t1 and match.toss_decision == "bat") or (match.toss_winner == t2 and match.toss_decision != "bat")
 
         t1_score = inn1_score if t1_batted_first else inn2_score
         t2_score = inn2_score if t1_batted_first else inn1_score
+
+        # Calculate phase metrics from deliveries
+        t1_pp = sum(d.runs_off_bat + d.extras for d in match.deliveries if d.batting_team == t1 and d.phase == "POWERPLAY")
+        t2_pp = sum(d.runs_off_bat + d.extras for d in match.deliveries if d.batting_team == t2 and d.phase == "POWERPLAY")
+        t1_death = sum(d.runs_off_bat + d.extras for d in match.deliveries if d.batting_team == t1 and d.phase == "DEATH")
+        t2_death = sum(d.runs_off_bat + d.extras for d in match.deliveries if d.batting_team == t2 and d.phase == "DEATH")
 
         m_summary_t1 = MatchSummary(
             match_id=match.match_id,
@@ -702,6 +894,10 @@ class HistoricalStateTracker:
             chose_bat=(match.toss_decision == "bat" if match.toss_winner == t1 else match.toss_decision != "bat"),
             team_score=t1_score,
             opp_score=t2_score,
+            margin_runs=match.margin_runs,
+            margin_wickets=match.margin_wickets,
+            pp_runs=t1_pp or 48,
+            death_runs=t1_death or 48,
         )
         m_summary_t2 = MatchSummary(
             match_id=match.match_id,
@@ -714,9 +910,12 @@ class HistoricalStateTracker:
             chose_bat=(match.toss_decision == "bat" if match.toss_winner == t2 else match.toss_decision != "bat"),
             team_score=t2_score,
             opp_score=t1_score,
+            margin_runs=match.margin_runs,
+            margin_wickets=match.margin_wickets,
+            pp_runs=t2_pp or 48,
+            death_runs=t2_death or 48,
         )
 
-        # 3. Update Team and Venue Match Histories
         self.team_matches[t1].append(m_summary_t1)
         self.team_matches[t2].append(m_summary_t2)
 
@@ -727,7 +926,7 @@ class HistoricalStateTracker:
         self.team_venue_matches[(t1, match.venue)].append(m_summary_t1)
         self.team_venue_matches[(t2, match.venue)].append(m_summary_t2)
 
-        # 4. Update Playing XI History
+        # 3. Update Playing XI History
         if t1 in match.playing_xi and len(match.playing_xi[t1]) >= 8:
             self.latest_xi[t1] = list(match.playing_xi[t1])
             self.latest_xi_match_id[t1] = match.match_id
@@ -737,9 +936,9 @@ class HistoricalStateTracker:
             self.latest_xi_match_id[t2] = match.match_id
             self.latest_xi_match_time[t2] = match.match_datetime
 
-        # 5. Update Player Career-to-Date Stats from Deliveries
+        # 4. Update Player Career-to-Date Stats from Deliveries
         player_innings_runs: Dict[str, int] = defaultdict(int)
-        bowler_spell: Dict[str, Tuple[int, int]] = defaultdict(lambda: (0, 0))  # bowler -> (runs, wkts)
+        bowler_spell: Dict[str, Tuple[int, int]] = defaultdict(lambda: (0, 0))
 
         for d in match.deliveries:
             striker = d.striker
@@ -747,12 +946,16 @@ class HistoricalStateTracker:
             dismissed_p = d.player_dismissed
             is_wicket = bool(d.wicket_type and d.wicket_type.lower() not in {"run out", "retired hurt", "retired out", "obstructing the field"})
 
+            b_info = PLAYER_STYLES.get(bowler, {})
+            b_type = "spin" if b_info.get("bowl") in ["OB", "SLA", "LBG", "LBC", "SLO"] else "pace"
+
             # Batting update
             self.player_batting[striker].add_ball(
                 runs=d.runs_off_bat,
                 is_legal=d.is_legal,
                 phase=d.phase,
                 dismissed=(dismissed_p == striker and is_wicket),
+                bowler_type=b_type,
             )
             player_innings_runs[striker] += d.runs_off_bat
 
@@ -766,6 +969,14 @@ class HistoricalStateTracker:
             )
             r_prev, w_prev = bowler_spell[bowler]
             bowler_spell[bowler] = (r_prev + bowler_runs, w_prev + (1 if is_wicket else 0))
+
+            # Batter vs Bowler head-to-head encounter update
+            prev_r, prev_b, prev_d = self.matchups_b_vs_b[(striker, bowler)]
+            self.matchups_b_vs_b[(striker, bowler)] = (
+                prev_r + d.runs_off_bat,
+                prev_b + (1 if d.is_legal else 0),
+                prev_d + (1 if is_wicket and dismissed_p == striker else 0),
+            )
 
             self.player_last_match[striker] = match.match_datetime
             self.player_last_match[bowler] = match.match_datetime
@@ -803,7 +1014,6 @@ class ChronologicalDataLoader:
             match_id = info_path.stem.replace("_info", "")
             ball_path = self.cricsheet_dir / f"{match_id}.csv"
 
-            # Parse info
             info_dict: Dict[str, List[str]] = defaultdict(list)
             player_dict: Dict[str, List[str]] = defaultdict(list)
 
@@ -843,7 +1053,6 @@ class ChronologicalDataLoader:
             except Exception:
                 match_num = 1
 
-            # Build canonical timestamp for intraday sorting
             m_datetime = datetime.combine(m_date, time(19, 30)) + timedelta(minutes=match_num)
 
             venue_raw = info_dict.get("venue", ["Wankhede Stadium"])[0]
@@ -856,7 +1065,6 @@ class ChronologicalDataLoader:
             margin_runs = int(info_dict.get("winner_runs", [0])[0] or 0)
             margin_wickets = int(info_dict.get("winner_wickets", [0])[0] or 0)
 
-            # Parse deliveries if available
             deliveries: List[BallRecord] = []
             innings_scores: Dict[int, Tuple[int, int, int]] = defaultdict(lambda: (0, 0, 0))
 
@@ -905,7 +1113,6 @@ class ChronologicalDataLoader:
                             )
                             deliveries.append(rec)
 
-                            # Accumulate innings total
                             r_curr, w_curr, b_curr = innings_scores[inn]
                             is_legal = wides == 0 and noballs == 0
                             is_wkt = bool(w_type and w_type.lower() not in {"run out", "retired hurt", "retired out"})
@@ -942,7 +1149,6 @@ class ChronologicalDataLoader:
             )
             matches.append(match_obj)
 
-        # Canonical sort: strictly chronological
         matches.sort(key=lambda m: (m.match_date, m.match_number, m.match_id))
         return matches
 
@@ -952,59 +1158,92 @@ class ChronologicalDataLoader:
 
 class TemporalFeatureEngine:
     """
-    Builds pre-match feature vectors with mathematical temporal guarantees.
+    Builds rich pre-match feature vectors with mathematical temporal guarantees.
     """
 
     FEATURE_NAMES = [
-        # Team ELO
+        # 1. Team Dynamic ELO Ratings
         "t1_elo",
         "t2_elo",
         "elo_diff",
         "elo_expected_t1",
-        # Team Form & Win Rates
+        # 2. Team Multi-Window Exponential Form & Win Rates
         "t1_recent_wins",
         "t2_recent_wins",
         "t1_form_exp",
         "t2_form_exp",
         "form_diff_exp",
+        "t1_form_3",
+        "t2_form_3",
+        "t1_form_8",
+        "t2_form_8",
         "t1_historical_wr",
         "t2_historical_wr",
         "team_wr_diff",
-        # Head-to-Head
+        "t1_pp_run_rate",
+        "t2_pp_run_rate",
+        "t1_death_run_rate",
+        "t2_death_run_rate",
+        # 3. Head-to-Head Historical Dynamics
         "h2h_t1_wr",
         "h2h_matches_count",
         "h2h_recent_t1_wr",
-        # Venue Dynamics
+        # 4. Empirical Dynamic Venue Dynamics
         "venue_avg_1st_innings",
         "venue_chase_wr",
         "t1_venue_wr",
         "t2_venue_wr",
         "venue_wr_diff",
         "venue_exp_count",
-        # Lineup Aggregated Strengths (Pre-XI or Post-XI)
+        # 5. Structured Playing XI Composition Ratings
         "t1_bat_score",
         "t2_bat_score",
         "bat_diff",
         "t1_bowl_score",
         "t2_bowl_score",
         "bowl_diff",
+        "t1_top_order_str",
+        "t2_top_order_str",
+        "top_order_diff",
+        "t1_middle_order_str",
+        "t2_middle_order_str",
+        "middle_order_diff",
+        "t1_finish_str",
+        "t2_finish_str",
+        "finish_diff",
         "t1_pp_bowl_str",
         "t2_pp_bowl_str",
         "pp_bowl_diff",
         "t1_death_bowl_str",
         "t2_death_bowl_str",
         "death_bowl_diff",
-        # Matchup Advantage
-        "lineup_synergy_diff",
-        # Pre-toss / Neutral context
+        "t1_spin_bowl_str",
+        "t2_spin_bowl_str",
+        "spin_bowl_diff",
+        "t1_pace_bowl_str",
+        "t2_pace_bowl_str",
+        "pace_bowl_diff",
+        "t1_allrounder_depth",
+        "t2_allrounder_depth",
+        # 6. Batter vs Bowling Style Interaction
+        "t1_bat_vs_spin_adv",
+        "t2_bat_vs_spin_adv",
+        "t1_bat_vs_pace_adv",
+        "t2_bat_vs_pace_adv",
+        "style_matchup_diff",
+        # 7. XI Continuity & Rest Workload
+        "t1_xi_continuity",
+        "t2_xi_continuity",
+        "t1_rest_days",
+        "t2_rest_days",
+        "rest_diff",
+        # 8. Era & Neutral Context Features
+        "is_impact_player_era",
         "is_playoff",
         "season_progress",
     ]
 
     def __init__(self, mode: str = "pre_xi"):
-        """
-        mode: 'pre_xi' (uses prior match playing XI) or 'post_xi' (uses target match actual playing XI)
-        """
         self.mode = mode
 
     def build_features(
@@ -1014,11 +1253,12 @@ class TemporalFeatureEngine:
         include_toss: bool = False,
     ) -> Dict[str, float]:
         """
-        Builds feature dictionary using ONLY historical state up to match.match_datetime.
+        Builds feature dictionary using ONLY historical state strictly up to match.match_datetime.
         """
         t1, t2 = match.team1, match.team2
         venue = match.venue
         season = match.season
+        m_time = match.match_datetime
 
         # 1. ELO Features
         t1_elo = state.elo.get_rating(t1, season)
@@ -1026,10 +1266,10 @@ class TemporalFeatureEngine:
         elo_diff = t1_elo - t2_elo
         elo_exp_t1 = state.elo.expected_prob(t1_elo, t2_elo)
 
-        # 2. Team Form & Overall History
-        t1_wins_5, t1_form_exp = state.get_team_form(t1, n=5)
-        t2_wins_5, t2_form_exp = state.get_team_form(t2, n=5)
-        form_diff_exp = t1_form_exp - t2_form_exp
+        # 2. Multi-Window Exponential Team Form
+        t1_f = state.get_team_multiwindow_form(t1)
+        t2_f = state.get_team_multiwindow_form(t2)
+        form_diff_exp = t1_f["form_5"] - t2_f["form_5"]
 
         t1_tot = state.team_matches.get(t1, [])
         t2_tot = state.team_matches.get(t2, [])
@@ -1037,10 +1277,10 @@ class TemporalFeatureEngine:
         t2_hwr = (sum(1 for m in t2_tot if m.won) / len(t2_tot)) if t2_tot else 0.50
         team_wr_diff = t1_hwr - t2_hwr
 
-        # 3. Head-to-Head
+        # 3. Head-to-Head Dynamics
         h2h = state.get_h2h_stats(t1, t2)
 
-        # 4. Venue
+        # 4. Venue Dynamics
         v_stats = state.get_venue_stats(venue, t1, t2)
         venue_wr_diff = v_stats["t1_venue_wr"] - v_stats["t2_venue_wr"]
 
@@ -1048,7 +1288,7 @@ class TemporalFeatureEngine:
         if self.mode == "pre_xi":
             t1_xi = state.get_latest_xi(t1)
             t2_xi = state.get_latest_xi(t2)
-            # Fallback if first match of franchise: use match's announced XI as baseline prior
+            # Fallback if first match of franchise
             if len(t1_xi) < 7:
                 t1_xi = list(match.playing_xi.get(t1, []))
             if len(t2_xi) < 7:
@@ -1057,31 +1297,94 @@ class TemporalFeatureEngine:
             t1_xi = list(match.playing_xi.get(t1, []))
             t2_xi = list(match.playing_xi.get(t2, []))
 
-        # Compute Lineup Aggregated Ratings
-        t1_bat_scores = [state.get_player_batting_rating(p)["composite_rating"] for p in t1_xi[:7]]
-        t2_bat_scores = [state.get_player_batting_rating(p)["composite_rating"] for p in t2_xi[:7]]
+        # Retrieve Player Ratings
+        t1_bat_profs = [state.get_player_batting_rating(p) for p in t1_xi]
+        t2_bat_profs = [state.get_player_batting_rating(p) for p in t2_xi]
+
+        t1_bowl_profs = [state.get_player_bowling_rating(p) for p in t1_xi]
+        t2_bowl_profs = [state.get_player_bowling_rating(p) for p in t2_xi]
+
+        # Top order (1-3), Middle order (4-6), Finishers (6-8)
+        t1_top = float(sum(p["composite_rating"] for p in t1_bat_profs[:3]) / max(len(t1_bat_profs[:3]), 1)) if t1_bat_profs else 28.0
+        t2_top = float(sum(p["composite_rating"] for p in t2_bat_profs[:3]) / max(len(t2_bat_profs[:3]), 1)) if t2_bat_profs else 28.0
+
+        t1_mid = float(sum(p["composite_rating"] for p in t1_bat_profs[3:6]) / max(len(t1_bat_profs[3:6]), 1)) if len(t1_bat_profs) >= 4 else 26.0
+        t2_mid = float(sum(p["composite_rating"] for p in t2_bat_profs[3:6]) / max(len(t2_bat_profs[3:6]), 1)) if len(t2_bat_profs) >= 4 else 26.0
+
+        t1_fin = float(sum(p["death_sr"] for p in t1_bat_profs[5:8]) / max(len(t1_bat_profs[5:8]), 1)) if len(t1_bat_profs) >= 6 else 145.0
+        t2_fin = float(sum(p["death_sr"] for p in t2_bat_profs[5:8]) / max(len(t2_bat_profs[5:8]), 1)) if len(t2_bat_profs) >= 6 else 145.0
+
+        t1_bat_scores = [p["composite_rating"] for p in t1_bat_profs[:8]]
+        t2_bat_scores = [p["composite_rating"] for p in t2_bat_profs[:8]]
         t1_bat = float(sum(t1_bat_scores) / len(t1_bat_scores)) if t1_bat_scores else 28.0
         t2_bat = float(sum(t2_bat_scores) / len(t2_bat_scores)) if t2_bat_scores else 28.0
         bat_diff = t1_bat - t2_bat
 
-        t1_bowl_scores = [state.get_player_bowling_rating(p)["composite_rating"] for p in t1_xi[-5:]]
-        t2_bowl_scores = [state.get_player_bowling_rating(p)["composite_rating"] for p in t2_xi[-5:]]
-        t1_bowl = float(sum(t1_bowl_scores) / len(t1_bowl_scores)) if t1_bowl_scores else 13.5
-        t2_bowl = float(sum(t2_bowl_scores) / len(t2_bowl_scores)) if t2_bowl_scores else 13.5
+        # Bowling Phase Strengths (Powerplay, Death, Spin vs Pace)
+        # Select genuine bowling options (top 5-6 bowlers in XI by bowling composite rating)
+        t1_bowlers = sorted(t1_bowl_profs, key=lambda b: -b["composite_rating"])[:5]
+        t2_bowlers = sorted(t2_bowl_profs, key=lambda b: -b["composite_rating"])[:5]
+
+        t1_bowl = float(sum(b["composite_rating"] for b in t1_bowlers) / len(t1_bowlers)) if t1_bowlers else 13.5
+        t2_bowl = float(sum(b["composite_rating"] for b in t2_bowlers) / len(t2_bowlers)) if t2_bowlers else 13.5
         bowl_diff = t1_bowl - t2_bowl
 
-        # Phase bowling strengths (Death & PP)
-        t1_death_ecos = [state.get_player_bowling_rating(p)["death_eco"] for p in t1_xi[-5:]]
-        t2_death_ecos = [state.get_player_bowling_rating(p)["death_eco"] for p in t2_xi[-5:]]
-        t1_death = 120.0 / max(float(sum(t1_death_ecos) / len(t1_death_ecos)) if t1_death_ecos else 10.0, 5.0)
-        t2_death = 120.0 / max(float(sum(t2_death_ecos) / len(t2_death_ecos)) if t2_death_ecos else 10.0, 5.0)
-
-        t1_pp_ecos = [state.get_player_bowling_rating(p)["pp_eco"] for p in t1_xi[-5:]]
-        t2_pp_ecos = [state.get_player_bowling_rating(p)["pp_eco"] for p in t2_xi[-5:]]
+        t1_pp_ecos = [b["pp_eco"] for b in t1_bowlers]
+        t2_pp_ecos = [b["pp_eco"] for b in t2_bowlers]
         t1_pp = 120.0 / max(float(sum(t1_pp_ecos) / len(t1_pp_ecos)) if t1_pp_ecos else 8.0, 4.5)
         t2_pp = 120.0 / max(float(sum(t2_pp_ecos) / len(t2_pp_ecos)) if t2_pp_ecos else 8.0, 4.5)
 
-        # Context features
+        t1_death_ecos = [b["death_eco"] for b in t1_bowlers]
+        t2_death_ecos = [b["death_eco"] for b in t2_bowlers]
+        t1_death = 120.0 / max(float(sum(t1_death_ecos) / len(t1_death_ecos)) if t1_death_ecos else 10.0, 5.0)
+        t2_death = 120.0 / max(float(sum(t2_death_ecos) / len(t2_death_ecos)) if t2_death_ecos else 10.0, 5.0)
+
+        # Spin vs Pace Bowling Strength
+        t1_spinners = [b for b in t1_bowlers if b["is_spinner"]]
+        t2_spinners = [b for b in t2_bowlers if b["is_spinner"]]
+        t1_pacers = [b for b in t1_bowlers if not b["is_spinner"]]
+        t2_pacers = [b for b in t2_bowlers if not b["is_spinner"]]
+
+        t1_spin_str = float(sum(b["composite_rating"] for b in t1_spinners) / max(len(t1_spinners), 1)) if t1_spinners else 12.0
+        t2_spin_str = float(sum(b["composite_rating"] for b in t2_spinners) / max(len(t2_spinners), 1)) if t2_spinners else 12.0
+        t1_pace_str = float(sum(b["composite_rating"] for b in t1_pacers) / max(len(t1_pacers), 1)) if t1_pacers else 13.0
+        t2_pace_str = float(sum(b["composite_rating"] for b in t2_pacers) / max(len(t2_pacers), 1)) if t2_pacers else 13.0
+
+        # All-rounder depth count (players with bat composite > 20 and bowl composite > 10)
+        t1_ar_count = sum(1 for bp, bowp in zip(t1_bat_profs, t1_bowl_profs) if bp["composite_rating"] > 20.0 and bowp["composite_rating"] > 10.0)
+        t2_ar_count = sum(1 for bp, bowp in zip(t2_bat_profs, t2_bowl_profs) if bp["composite_rating"] > 20.0 and bowp["composite_rating"] > 10.0)
+
+        # 6. Batter vs Bowling Style Matchup Advantage
+        t1_vs_spin = float(sum(p["vs_spin_sr"] for p in t1_bat_profs[:6]) / max(len(t1_bat_profs[:6]), 1)) if t1_bat_profs else 126.0
+        t2_vs_spin = float(sum(p["vs_spin_sr"] for p in t2_bat_profs[:6]) / max(len(t2_bat_profs[:6]), 1)) if t2_bat_profs else 126.0
+        t1_vs_pace = float(sum(p["vs_pace_sr"] for p in t1_bat_profs[:6]) / max(len(t1_bat_profs[:6]), 1)) if t1_bat_profs else 128.0
+        t2_vs_pace = float(sum(p["vs_pace_sr"] for p in t2_bat_profs[:6]) / max(len(t2_bat_profs[:6]), 1)) if t2_bat_profs else 128.0
+
+        t1_bat_vs_spin_adv = (t1_vs_spin - 125.0) - (t2_spin_str - 12.0) * 2.0
+        t2_bat_vs_spin_adv = (t2_vs_spin - 125.0) - (t1_spin_str - 12.0) * 2.0
+        t1_bat_vs_pace_adv = (t1_vs_pace - 125.0) - (t2_pace_str - 13.0) * 2.0
+        t2_bat_vs_pace_adv = (t2_vs_pace - 125.0) - (t1_pace_str - 13.0) * 2.0
+        style_matchup_diff = (t1_bat_vs_spin_adv + t1_bat_vs_pace_adv) - (t2_bat_vs_spin_adv + t2_bat_vs_pace_adv)
+
+        # 7. XI Continuity & Rest Workload
+        prior_t1_matches = state.team_matches.get(t1, [])
+        prior_t2_matches = state.team_matches.get(t2, [])
+
+        t1_rest = min(14.0, max(1.0, (m_time - prior_t1_matches[-1].match_datetime).total_seconds() / 86400.0)) if prior_t1_matches else 5.0
+        t2_rest = min(14.0, max(1.0, (m_time - prior_t2_matches[-1].match_datetime).total_seconds() / 86400.0)) if prior_t2_matches else 5.0
+
+        # Continuity: fraction of current XI from team's previous match
+        t1_prev_xi = state.get_latest_xi(t1)
+        t2_prev_xi = state.get_latest_xi(t2)
+        t1_cont = len(set(t1_xi) & set(t1_prev_xi)) / max(len(t1_xi), 1) if t1_prev_xi else 1.0
+        t2_cont = len(set(t2_xi) & set(t2_prev_xi)) / max(len(t2_xi), 1) if t2_prev_xi else 1.0
+
+        # 8. Era & Neutral Context
+        try:
+            year_int = int(str(season)[:4])
+        except Exception:
+            year_int = match.match_date.year
+        is_impact_era = 1.0 if year_int >= 2023 else 0.0
         is_playoff = 1.0 if match.match_number > 56 else 0.0
         season_prog = min(1.0, max(0.0, match.match_number / 74.0))
 
@@ -1090,14 +1393,22 @@ class TemporalFeatureEngine:
             "t2_elo": round(t2_elo, 2),
             "elo_diff": round(elo_diff, 2),
             "elo_expected_t1": round(elo_exp_t1, 4),
-            "t1_recent_wins": float(t1_wins_5),
-            "t2_recent_wins": float(t2_wins_5),
-            "t1_form_exp": round(t1_form_exp, 4),
-            "t2_form_exp": round(t2_form_exp, 4),
+            "t1_recent_wins": float(t1_f["wins_5"]),
+            "t2_recent_wins": float(t2_f["wins_5"]),
+            "t1_form_exp": round(t1_f["form_5"], 4),
+            "t2_form_exp": round(t2_f["form_5"], 4),
             "form_diff_exp": round(form_diff_exp, 4),
+            "t1_form_3": round(t1_f["form_3"], 4),
+            "t2_form_3": round(t2_f["form_3"], 4),
+            "t1_form_8": round(t1_f["form_8"], 4),
+            "t2_form_8": round(t2_f["form_8"], 4),
             "t1_historical_wr": round(t1_hwr, 4),
             "t2_historical_wr": round(t2_hwr, 4),
             "team_wr_diff": round(team_wr_diff, 4),
+            "t1_pp_run_rate": round(t1_f["pp_run_rate"], 2),
+            "t2_pp_run_rate": round(t2_f["pp_run_rate"], 2),
+            "t1_death_run_rate": round(t1_f["death_run_rate"], 2),
+            "t2_death_run_rate": round(t2_f["death_run_rate"], 2),
             "h2h_t1_wr": round(h2h["t1_wr"], 4),
             "h2h_matches_count": float(h2h["total_matches"]),
             "h2h_recent_t1_wr": round(h2h["recent_t1_wr"], 4),
@@ -1113,13 +1424,40 @@ class TemporalFeatureEngine:
             "t1_bowl_score": round(t1_bowl, 2),
             "t2_bowl_score": round(t2_bowl, 2),
             "bowl_diff": round(bowl_diff, 2),
+            "t1_top_order_str": round(t1_top, 2),
+            "t2_top_order_str": round(t2_top, 2),
+            "top_order_diff": round(t1_top - t2_top, 2),
+            "t1_middle_order_str": round(t1_mid, 2),
+            "t2_middle_order_str": round(t2_mid, 2),
+            "middle_order_diff": round(t1_mid - t2_mid, 2),
+            "t1_finish_str": round(t1_fin, 2),
+            "t2_finish_str": round(t2_fin, 2),
+            "finish_diff": round(t1_fin - t2_fin, 2),
             "t1_pp_bowl_str": round(t1_pp, 2),
             "t2_pp_bowl_str": round(t2_pp, 2),
             "pp_bowl_diff": round(t1_pp - t2_pp, 2),
             "t1_death_bowl_str": round(t1_death, 2),
             "t2_death_bowl_str": round(t2_death, 2),
             "death_bowl_diff": round(t1_death - t2_death, 2),
-            "lineup_synergy_diff": round((bat_diff * 0.4 + bowl_diff * 0.6) / 10.0, 3),
+            "t1_spin_bowl_str": round(t1_spin_str, 2),
+            "t2_spin_bowl_str": round(t2_spin_str, 2),
+            "spin_bowl_diff": round(t1_spin_str - t2_spin_str, 2),
+            "t1_pace_bowl_str": round(t1_pace_str, 2),
+            "t2_pace_bowl_str": round(t2_pace_str, 2),
+            "pace_bowl_diff": round(t1_pace_str - t2_pace_str, 2),
+            "t1_allrounder_depth": float(t1_ar_count),
+            "t2_allrounder_depth": float(t2_ar_count),
+            "t1_bat_vs_spin_adv": round(t1_bat_vs_spin_adv, 2),
+            "t2_bat_vs_spin_adv": round(t2_bat_vs_spin_adv, 2),
+            "t1_bat_vs_pace_adv": round(t1_bat_vs_pace_adv, 2),
+            "t2_bat_vs_pace_adv": round(t2_bat_vs_pace_adv, 2),
+            "style_matchup_diff": round(style_matchup_diff, 2),
+            "t1_xi_continuity": round(t1_cont, 3),
+            "t2_xi_continuity": round(t2_cont, 3),
+            "t1_rest_days": round(t1_rest, 1),
+            "t2_rest_days": round(t2_rest, 1),
+            "rest_diff": round(t1_rest - t2_rest, 1),
+            "is_impact_player_era": is_impact_era,
             "is_playoff": is_playoff,
             "season_progress": round(season_prog, 3),
         }

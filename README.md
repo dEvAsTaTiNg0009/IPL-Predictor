@@ -30,20 +30,20 @@ Evaluated sequentially across **644 fully blind held-out matches** spanning 11 c
 
 ### Season-by-Season Blind Results (PRE-XI Mode)
 
-| Outer Train Window | Test Season | Matches | Correct | Accuracy | Balanced Acc | ROC-AUC | Log Loss | Brier Score | ELO Baseline | Stronger Baseline |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **2008–2015** | 2016 | 60 | 26 | 43.3% | 41.7% | 0.3806 | 0.7437 | 0.2742 | 50.0% | 46.7% |
-| **2008–2016** | 2017 | 58 | 32 | 55.2% | 50.0% | 0.4573 | 0.6995 | 0.2529 | 51.7% | 55.2% |
-| **2008–2017** | 2018 | 60 | 28 | 46.7% | 49.1% | 0.4364 | 0.7378 | 0.2706 | 43.3% | 46.7% |
-| **2008–2018** | 2019 | 57 | 22 | 38.6% | 50.0% | 0.5110 | 0.7027 | 0.2551 | 45.6% | 38.6% |
-| **2008–2019** | 2020 | 56 | 31 | 55.4% | 55.9% | 0.6073 | 0.6800 | 0.2437 | 53.6% | 48.2% |
-| **2008–2020** | 2021 | 59 | 39 | **66.1%** | 61.9% | 0.6155 | 0.6765 | 0.2416 | 54.2% | 37.3% |
-| **2008–2021** | 2022 | 74 | 30 | 40.5% | 40.5% | 0.4467 | 0.7180 | 0.2627 | 51.4% | 50.0% |
-| **2008–2022** | 2023 | 73 | 30 | 41.1% | 43.1% | 0.4511 | 0.7309 | 0.2686 | 52.1% | 54.8% |
-| **2008–2023** | 2024 | 71 | 39 | **54.9%** | 55.0% | 0.5012 | 0.7051 | 0.2557 | 47.9% | 49.3% |
-| **2008–2024** | 2025 | 70 | 43 | **61.4%** | 62.0% | 0.6282 | 0.6708 | 0.2389 | 45.7% | 47.1% |
-| **2008–2025** | 2026 | 6 | 3 | **50.0%** | 70.0% | 0.4000 | 0.7180 | 0.2624 | 33.3% | 16.7% |
-| **TOTAL / OVERALL** | **2016–2026** | **644** | **323** | **50.2%** | **50.7%** | **0.4879** | **0.7070** | **0.2567** | **49.4%** | **47.4%** |
+| Outer Train Window | Test Season | Matches | Correct | Accuracy | Balanced Acc | ROC-AUC | Log Loss | Brier Score | ELO Baseline | Bayesian Baseline |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **2008–2015** | 2016 | 60 | 26 | 43.3% | 45.3% | 0.3817 | 0.7557 | 0.2800 | 50.0% | 51.7% |
+| **2008–2016** | 2017 | 58 | 32 | 55.2% | 55.0% | 0.5793 | 0.6761 | 0.2416 | 51.7% | 56.9% |
+| **2008–2017** | 2018 | 60 | 28 | 46.7% | 49.5% | 0.5737 | 0.7133 | 0.2587 | 43.3% | 45.0% |
+| **2008–2018** | 2019 | 57 | 28 | 49.1% | 53.5% | 0.5351 | 0.7293 | 0.2672 | 45.6% | 45.6% |
+| **2008–2019** | 2020 | 56 | 28 | 50.0% | 49.9% | 0.4981 | 0.7170 | 0.2615 | 53.6% | 53.6% |
+| **2008–2020** | 2021 | 59 | 33 | 55.9% | 48.3% | 0.5510 | 0.7219 | 0.2618 | 54.2% | 54.2% |
+| **2008–2021** | 2022 | 74 | 38 | 51.3% | 51.3% | 0.4993 | 0.7060 | 0.2563 | 51.3% | 48.6% |
+| **2008–2022** | 2023 | 73 | 37 | 50.7% | 52.6% | 0.5102 | 0.7224 | 0.2608 | 52.0% | 57.5% |
+| **2008–2023** | 2024 | 71 | 37 | 52.1% | 51.9% | 0.5020 | 0.7061 | 0.2561 | 47.9% | 50.7% |
+| **2008–2024** | 2025 | 70 | 38 | 54.3% | 53.5% | 0.5307 | 0.6857 | 0.2464 | 45.7% | 44.3% |
+| **2008–2025** | 2026 | 6 | 3 | **50.0%** | 70.0% | 0.4000 | 0.7014 | 0.2541 | 33.3% | 50.0% |
+| **TOTAL / OVERALL** | **2016–2026** | **644** | **328** | **50.9%** | **51.0%** | **0.4957** | **0.7127** | **0.2587** | **49.4%** | **50.8%** |
 
 ---
 
@@ -53,30 +53,34 @@ Models were trained strictly on **2008–2025 data (1,146 completed matches)** a
 
 | Match ID | Date | Fixture | Venue | Predicted Winner (Prob) | Actual Winner | Result | T1 XI Source | T2 XI Source |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **1527674** | 2026-03-28 | SRH vs RCB | M Chinnaswamy Stadium, Bengaluru | SRH (54.0%) | RCB | ❌ Incorrect | Match 1473505 | Match 1473511 |
-| **1527675** | 2026-03-29 | KKR vs MI | Wankhede Stadium, Mumbai | KKR (54.0%) | MI | ❌ Incorrect | Match 1473505 | Match 1473510 |
-| **1527676** | 2026-03-30 | CSK vs RR | Barsapara Cricket Stadium, Guwahati | RR (51.3%) | RR | ✅ **Correct** | Match 1473504 | Match 1473500 |
-| **1527677** | 2026-03-31 | GT vs PBKS | Maharaja Yadavindra Singh Stadium, Mullanpur | PBKS (51.3%) | PBKS | ✅ **Correct** | Match 1473509 | Match 1473511 |
-| **1527678** | 2026-04-01 | LSG vs DC | BRSABV Ekana Stadium, Lucknow | LSG (54.0%) | DC | ❌ Incorrect | Match 1473507 | Match 1485779 |
-| **1527679** | 2026-04-02 | SRH vs KKR | Eden Gardens, Kolkata | SRH (52.6%) | SRH | ✅ **Correct** | Match 1527674 | Match 1527675 |
+| **1527674** | 2026-03-28 | SRH vs RCB | M Chinnaswamy Stadium, Bengaluru | SRH (53.4%) | RCB | ❌ Incorrect | Match 1473505 | Match 1473511 |
+| **1527675** | 2026-03-29 | KKR vs MI | Wankhede Stadium, Mumbai | KKR (53.4%) | MI | ❌ Incorrect | Match 1473505 | Match 1473510 |
+| **1527676** | 2026-03-30 | CSK vs RR | Barsapara Cricket Stadium, Guwahati | RR (54.5%) | RR | ✅ **Correct** | Match 1473504 | Match 1473500 |
+| **1527677** | 2026-03-31 | GT vs PBKS | Maharaja Yadavindra Singh Stadium, Mullanpur | PBKS (54.5%) | PBKS | ✅ **Correct** | Match 1473509 | Match 1473511 |
+| **1527678** | 2026-04-01 | LSG vs DC | BRSABV Ekana Stadium, Lucknow | LSG (54.9%) | DC | ❌ Incorrect | Match 1473507 | Match 1485779 |
+| **1527679** | 2026-04-02 | SRH vs KKR | Eden Gardens, Kolkata | SRH (51.1%) | SRH | ✅ **Correct** | Match 1527674 | Match 1527675 |
 
-**2026 Benchmark Metrics:** Accuracy: **50.0% (3/6)** | Log Loss: **0.7180** | Brier Score: **0.2624** | ELO Baseline: **33.3%** | Stronger Team Baseline: **16.7%**
+**2026 Benchmark Metrics:** Accuracy: **50.0% (3/6)** | Log Loss: **0.7014** | Brier Score: **0.2541** | Dynamic ELO Baseline: **33.3%** | Stronger Team Baseline: **16.7%**
 
 ---
 
-## 🧪 Systematic Feature Ablation Study (2020–2026)
+## 🧪 Systematic 11-Step Feature Ablation Study (2020–2026)
 
-To understand feature group contributions, sequential walk-forward evaluation was conducted across 7 incremental feature configurations:
+To understand feature group contributions, sequential walk-forward evaluation was conducted across 11 incremental feature configurations:
 
 | Config | Feature Group Added | # Feats | Accuracy | Log Loss | Brier Score | ROC-AUC |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **A** | Dynamic Pre-Match ELO Only | 4 | 48.4% | 0.6939 | 0.2506 | 0.4828 |
-| **B** | + Team Exponential Form & Win Rates | 10 | 52.6% | 0.6954 | 0.2511 | 0.4810 |
-| **C** | + Head-to-Head Historical Dynamics | 13 | 50.1% | 0.7086 | 0.2530 | 0.5199 |
-| **D** | + Venue Statistics & Chase Win Rates | 19 | 51.3% | 0.6886 | 0.2477 | 0.5168 |
-| **E** | + Player Career-to-Date Batting/Bowling Ratings | 25 | **55.5%** | 0.6933 | 0.2492 | **0.6018** |
-| **F** | + Bowling Phase Strengths (Powerplay, Death) | 31 | 51.1% | 0.6971 | 0.2503 | 0.5481 |
-| **G** | + Lineup Synergy & Matchup Context (Full Model) | 36 | 52.6% | 0.6999 | 0.2534 | 0.5214 |
+| **A** | Dynamic Pre-Match ELO Only | 4 | 50.86% | 0.6970 | 0.2515 | 0.5081 |
+| **B** | + Multi-Window Team Exponential Form | 14 | 52.57% | 0.6993 | 0.2528 | 0.5247 |
+| **C** | + Player Career-to-Date Strengths (Batting/Bowling) | 20 | 50.61% | 0.7050 | 0.2558 | 0.4491 |
+| **D** | + Venue Statistics & Chase Win Rates | 26 | 51.10% | 0.6895 | 0.2485 | 0.5273 |
+| **E** | + Head-to-Head Historical Dynamics | 29 | 50.86% | 0.6965 | 0.2516 | 0.5257 |
+| **F** | + Playing XI Tactical Composition (Top/Mid/Finish/Phase) | 52 | 50.37% | 0.7056 | 0.2555 | 0.5706 |
+| **G** | + Batter vs Bowler & Style Matchup Matrix | 57 | 53.30% | 0.7009 | 0.2507 | 0.5323 |
+| **H** | + Player Continuity & Workload / Rest Days | 62 | 55.75% | 0.6956 | 0.2508 | 0.5178 |
+| **I** | + Era & Phase Adjustments (Optimal Set) | 69 | **56.23%** | **0.6896** | **0.2483** | **0.5323** |
+| **J** | Weather Ablation (Without Weather) | 71 | 50.61% | 0.7117 | 0.2567 | 0.4666 |
+| **K** | Full Model (with Context Flags) | 71 | 50.61% | 0.7117 | 0.2567 | 0.4666 |
 
 ---
 
@@ -84,15 +88,16 @@ To understand feature group contributions, sequential walk-forward evaluation wa
 
 ```
                                ┌──────────────────────────────────────────────┐
-                               │       CRONOLOGICAL DATA INGESTION            │
+                               │       CHRONOLOGICAL DATA INGESTION           │
                                │  1,175 Cricsheet matches (2008–2026)         │
                                └──────────────────────┬───────────────────────┘
                                                       │
                                                       ▼
                                ┌──────────────────────────────────────────────┐
                                │         HISTORICAL STATE TRACKER             │
-                               │  Pre-match ELO · Bayesian player ratings     │
-                               │  Exponential form · Venue & H2H registries   │
+                               │  Dynamic ELO · Bayesian player ratings       │
+                               │  Multi-window form · Venue & H2H registries  │
+                               │  Batter vs bowling style interaction matrix  │
                                └──────────────────────┬───────────────────────┘
                                                       │
                                                       ▼
@@ -124,7 +129,7 @@ To understand feature group contributions, sequential walk-forward evaluation wa
 Run the automated test suite to mathematically verify feature immutability and causality:
 
 ```bash
-PYTHONPATH=. pytest tests/test_temporal_leakage.py -v
+PYTHONPATH=. ./.venv/bin/python3 -m unittest tests/test_temporal_leakage.py
 ```
 
 ### Verified Test Cases:
@@ -150,10 +155,10 @@ pip install -r requirements.txt
 
 ### Run Walk-Forward Evaluation & Ablation Study
 ```bash
-# Fast evaluation of recent seasons (2024–2026)
+# Fast evaluation of recent seasons (2021–2026)
 python fast_eval.py
 
-# Full walk-forward backtest (2016–2026) and 7-config ablation study
+# Full walk-forward backtest (2016–2026) and 11-step ablation study
 python walk_forward_backtest.py --run-all --run-ablation
 ```
 
@@ -162,9 +167,9 @@ python walk_forward_backtest.py --run-all --run-ablation
 python ipl_predictor.py
 ```
 
-### Run Feature Sensitivity & Transparency Audit
+### Run Automated Temporal Leakage Suite
 ```bash
-python feature_audit.py
+python -m unittest tests/test_temporal_leakage.py
 ```
 
 ---
@@ -174,7 +179,7 @@ python feature_audit.py
 ```
 ├── ipl_temporal.py             # Canonical temporal data structures, state tracker & feature engine
 ├── ipl_models_pipeline.py      # Leak-free ensemble, expanding-window CV, calibration & metrics
-├── walk_forward_backtest.py    # Walk-forward blind evaluator, ablation suite & markdown reporter
+├── walk_forward_backtest.py    # Walk-forward blind evaluator, 11-step ablation suite & markdown reporter
 ├── fast_eval.py                # Fast leak-free evaluator for recent seasons
 ├── feature_audit.py            # Feature sensitivity, transparency & attribution audit
 ├── ipl_predictor.py            # Interactive CLI, pitch modeling, score & player projections
@@ -182,13 +187,16 @@ python feature_audit.py
 ├── tests/
 │   └── test_temporal_leakage.py# 8 automated leakage test cases
 ├── reports/
-│   ├── walk_forward_results.csv# Season-by-season walk-forward performance
+│   ├── WALK_FORWARD_RESULTS.csv# Season-by-season walk-forward performance
 │   ├── match_predictions.csv   # Match-by-match predictions with full audit trail
 │   ├── WALK_FORWARD_REPORT.md  # Detailed walk-forward analysis & calibration curves
 │   ├── 2026_BLIND_TEST.md      # IPL 2026 true holdout evaluation report
-│   └── ABLATION_STUDY.md       # 7-configuration feature ablation study
+│   ├── ABLATION_RESULTS.csv    # 11-configuration feature ablation study results
+│   ├── ABLATION_STUDY.md       # Ablation markdown report
+│   └── FEATURE_IMPORTANCE.csv  # Normalized tree & ensemble feature importances
 ├── docs/
-│   └── LEAKAGE_AUDIT.md        # Complete forensic leakage audit document
+│   ├── FINAL_LEAKAGE_AUDIT.md  # Complete second-stage forensic audit
+│   └── LEAKAGE_AUDIT.md        # Initial forensic leakage audit document
 ├── ipl_data/cricsheet/         # 1,175 raw Cricsheet IPL match CSVs (2008–2026)
 └── README.md                   # System documentation & evaluation benchmarks
 ```
@@ -197,6 +205,6 @@ python feature_audit.py
 
 ## 📜 Scientific Integrity & Limitations
 
-1. **Realistic Accuracy Bounds**: True pre-match IPL forecasting accuracy legitimately operates in the **50–65% range**. Cricket matches possess substantial inherent stochasticity (toss outcome, weather variations, dropped catches, umpire calls). Any claim of >75% pre-match accuracy in professional T20 cricket is indicative of temporal leakage.
+1. **Realistic Accuracy Bounds**: True pre-match IPL forecasting accuracy legitimately operates in the **50–58% range**. Cricket matches possess substantial inherent stochasticity (toss outcome, weather variations, dropped catches, umpire calls). Any claim of >75% pre-match accuracy in professional T20 cricket is indicative of temporal leakage.
 2. **Pre-XI Uncertainty**: Pre-match predictions rely on the previous match playing XI. Sudden tactical lineup rotations or late injuries announced at toss time cannot be foreseen prior to match announcement.
 3. **Score Projections**: T20 score prediction standard error is approximately $\pm 22$ runs due to boundary variance and death-over acceleration.

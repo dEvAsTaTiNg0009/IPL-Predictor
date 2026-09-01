@@ -12,7 +12,7 @@ import lightgbm as lgb
 import numpy as np
 from sklearn.ensemble import ExtraTreesClassifier, GradientBoostingClassifier, RandomForestClassifier
 from sklearn.isotonic import IsotonicRegression
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegression, RidgeClassifier
 from sklearn.metrics import (
     accuracy_score,
     balanced_accuracy_score,
@@ -96,11 +96,21 @@ def compute_comprehensive_metrics(
                 "gap": round(gap, 3),
             })
 
+    # Wilson 95% Confidence Interval for Accuracy
+    z = 1.96
+    p_hat = acc
+    denom = 1.0 + (z**2) / n_samples
+    centre = (p_hat + (z**2) / (2.0 * n_samples)) / denom
+    margin = (z * np.sqrt((p_hat * (1.0 - p_hat) + (z**2) / (4.0 * n_samples)) / n_samples)) / denom
+    ci_lower = max(0.0, centre - margin)
+    ci_upper = min(1.0, centre + margin)
+
     return {
         "n_matches": n_samples,
         "correct": correct,
         "incorrect": incorrect,
         "accuracy": round(acc, 4),
+        "accuracy_ci_95": (round(ci_lower, 4), round(ci_upper, 4)),
         "balanced_accuracy": round(bal_acc, 4),
         "roc_auc": round(auc, 4),
         "log_loss": round(ll, 4),
@@ -119,6 +129,17 @@ def compute_comprehensive_metrics(
 # ── Baseline Models ───────────────────────────────────────────────────────────
 
 
+class BaselineRandom:
+    """Predicts a constant 50% probability."""
+    def fit(self, X: np.ndarray, y: np.ndarray):
+        return self
+
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        n = len(X)
+        p = np.full((n, 2), 0.50)
+        return p
+
+
 class BaselineStrongerTeam:
     """Predicts winner based strictly on career pre-match win rate differential."""
 
@@ -129,8 +150,7 @@ class BaselineStrongerTeam:
         self.fitted = True
         return self
 
-    def predict_proba(self, X: np.ndarray, feature_idx: int = 9) -> np.ndarray:
-        # feature_idx 9 corresponds to team_wr_diff
+    def predict_proba(self, X: np.ndarray, feature_idx: int = 15) -> np.ndarray:
         wr_diff = X[:, feature_idx] if len(X.shape) > 1 and X.shape[1] > feature_idx else np.zeros(len(X))
         prob = 1.0 / (1.0 + np.exp(-3.0 * wr_diff))
         return np.column_stack([1.0 - prob, prob])
@@ -147,7 +167,6 @@ class BaselineTeamForm:
         return self
 
     def predict_proba(self, X: np.ndarray, feature_idx: int = 8) -> np.ndarray:
-        # feature_idx 8 corresponds to form_diff_exp
         form_diff = X[:, feature_idx] if len(X.shape) > 1 and X.shape[1] > feature_idx else np.zeros(len(X))
         prob = 1.0 / (1.0 + np.exp(-2.5 * form_diff))
         return np.column_stack([1.0 - prob, prob])
@@ -160,7 +179,6 @@ class BaselineELOOnly:
         self.lr = LogisticRegression(C=1.0, random_state=42)
 
     def fit(self, X: np.ndarray, y: np.ndarray, feature_idx: int = 2):
-        # feature_idx 2 corresponds to elo_diff
         elo_diff = X[:, feature_idx : feature_idx + 1]
         self.lr.fit(elo_diff, y)
         return self
@@ -168,6 +186,41 @@ class BaselineELOOnly:
     def predict_proba(self, X: np.ndarray, feature_idx: int = 2) -> np.ndarray:
         elo_diff = X[:, feature_idx : feature_idx + 1]
         return self.lr.predict_proba(elo_diff)
+
+
+# ── Bayesian Bradley-Terry Team-Strength Model ────────────────────────────────
+
+
+class BayesianTeamStrengthModel:
+    """
+    Bayesian Bradley-Terry Logit Team Rating Model.
+    Shrinks team strengths towards a common league mean using L2 regularization prior.
+    """
+
+    def __init__(self, prior_variance: float = 1.0):
+        self.prior_variance = prior_variance
+        self.model = LogisticRegression(C=1.0 / self.prior_variance, fit_intercept=False, random_state=42)
+        self.fitted = False
+        self.feature_indices = [0]
+
+    def fit(self, X_train: np.ndarray, y_train: np.ndarray, feature_indices: Optional[List[int]] = None):
+        n_feats = X_train.shape[1]
+        if feature_indices is None:
+            candidates = [2, 8, 32, 35] if n_feats > 35 else [2, 8]
+            feature_indices = [idx for idx in candidates if idx < n_feats]
+            if not feature_indices:
+                feature_indices = [min(2, n_feats - 1)]
+        self.feature_indices = feature_indices
+        X_sub = X_train[:, self.feature_indices]
+        self.model.fit(X_sub, y_train)
+        self.fitted = True
+        return self
+
+    def predict_proba(self, X_test: np.ndarray) -> np.ndarray:
+        if not self.fitted:
+            return np.full((len(X_test), 2), 0.50)
+        X_sub = X_test[:, self.feature_indices]
+        return self.model.predict_proba(X_sub)
 
 
 # ── Leak-Free Stacked Ensemble ────────────────────────────────────────────────
@@ -192,47 +245,47 @@ class LeakFreeEnsemble:
     def _init_base_models(self) -> Dict[str, Any]:
         return {
             "XGBoost": xgb.XGBClassifier(
-                n_estimators=150,
+                n_estimators=160,
                 max_depth=4,
-                learning_rate=0.03,
-                subsample=0.8,
-                colsample_bytree=0.8,
+                learning_rate=0.025,
+                subsample=0.85,
+                colsample_bytree=0.80,
                 eval_metric="logloss",
                 random_state=self.random_seed,
                 verbosity=0,
             ),
             "LightGBM": lgb.LGBMClassifier(
-                n_estimators=150,
+                n_estimators=160,
                 max_depth=4,
-                learning_rate=0.03,
-                subsample=0.8,
-                colsample_bytree=0.8,
+                learning_rate=0.025,
+                subsample=0.85,
+                colsample_bytree=0.80,
                 random_state=self.random_seed,
                 verbose=-1,
             ),
             "ExtraTrees": ExtraTreesClassifier(
-                n_estimators=180,
+                n_estimators=200,
                 max_depth=5,
                 min_samples_split=4,
                 random_state=self.random_seed,
                 n_jobs=-1,
             ),
             "GradientBoosting": GradientBoostingClassifier(
-                n_estimators=100,
+                n_estimators=120,
                 max_depth=3,
-                learning_rate=0.04,
-                subsample=0.8,
+                learning_rate=0.03,
+                subsample=0.85,
                 random_state=self.random_seed,
             ),
             "LogisticRegression": LogisticRegression(
-                C=0.3,
+                C=0.25,
                 max_iter=300,
                 random_state=self.random_seed,
             ),
             "NeuralNet": MLPClassifier(
                 hidden_layer_sizes=(48, 24),
                 max_iter=250,
-                alpha=0.01,
+                alpha=0.02,
                 random_state=self.random_seed,
                 early_stopping=True,
                 n_iter_no_change=15,
@@ -252,10 +305,6 @@ class LeakFreeEnsemble:
             raise ValueError(f"Insufficient training samples for nested ensemble: {n_samples}")
 
         # 1. Generate Expanding-Window Inner Cross-Validation Splits
-        # 5 progressive splits within the training set:
-        # e.g., train on 50% -> val on next 10%
-        #       train on 60% -> val on next 10% ...
-        #       train on 90% -> val on last 10%
         n_splits = 5
         min_train_size = int(n_samples * 0.45)
         val_chunk_size = (n_samples - min_train_size) // n_splits
@@ -291,7 +340,6 @@ class LeakFreeEnsemble:
 
             for m_idx, name in enumerate(model_names):
                 clf = self._init_base_models()[name]
-                # Scaled input for LR, NN, ExtraTrees; raw/scaled for trees
                 inp_tr = X_tr_s if name in ["LogisticRegression", "NeuralNet", "ExtraTrees"] else X_tr
                 inp_va = X_va_s if name in ["LogisticRegression", "NeuralNet", "ExtraTrees"] else X_va
 
@@ -308,8 +356,7 @@ class LeakFreeEnsemble:
 
         # 2. Train Meta-Learner strictly on valid OOF predictions
         self.meta_learner = LogisticRegression(
-            C=0.3,
-            penalty="l2",
+            C=0.25,
             random_state=self.random_seed,
         )
         self.meta_learner.fit(OOF_X, OOF_y)
@@ -339,9 +386,6 @@ class LeakFreeEnsemble:
         return self
 
     def predict_proba(self, X_test: np.ndarray) -> np.ndarray:
-        """
-        Returns probabilities [P(team2_wins), P(team1_wins)].
-        """
         if not self.fitted:
             raise RuntimeError("Model is not fitted. Call fit() first.")
 
@@ -372,3 +416,24 @@ class LeakFreeEnsemble:
     def predict(self, X_test: np.ndarray) -> np.ndarray:
         probs = self.predict_proba(X_test)[:, 1]
         return (probs >= 0.5).astype(int)
+
+    def get_feature_importances(self, feature_names: List[str]) -> List[Tuple[str, float]]:
+        """Computes normalized feature importance across tree base models."""
+        if not self.fitted:
+            return []
+        importances = np.zeros(len(feature_names), dtype=float)
+        tree_count = 0
+        for name in ["XGBoost", "LightGBM", "ExtraTrees", "GradientBoosting"]:
+            if name in self.base_models and hasattr(self.base_models[name], "feature_importances_"):
+                fi = np.asarray(self.base_models[name].feature_importances_, dtype=float)
+                if len(fi) == len(feature_names):
+                    fi_norm = fi / (np.sum(fi) + 1e-12)
+                    importances += fi_norm
+                    tree_count += 1
+
+        if tree_count > 0:
+            importances /= tree_count
+
+        pairs = list(zip(feature_names, importances.tolist()))
+        pairs.sort(key=lambda p: -p[1])
+        return pairs

@@ -1,0 +1,12 @@
+configuration,features_count,accuracy,log_loss,brier_score,roc_auc
+A. ELO Only,4,0.5086,0.697,0.2515,0.5081
+B. ELO + Team Form,14,0.5257,0.6993,0.2528,0.5247
+C. + Player Strength,20,0.5061,0.705,0.2558,0.4491
+D. + Venue Historical Dynamics,26,0.511,0.6895,0.2485,0.5273
+E. + Head-to-Head Dynamics,29,0.5086,0.6965,0.2516,0.5257
+F. + Playing XI Composition,52,0.5037,0.7056,0.2555,0.5706
+G. + Matchup & Style Features,57,0.533,0.7009,0.2507,0.5323
+H. + Player Continuity & Workload,62,0.5575,0.6956,0.2508,0.5178
+I. + Era & Phase Adjustments,69,0.5623,0.6896,0.2483,0.5323
+J. Weather Ablation (Without Weather),71,0.5061,0.7117,0.2567,0.4666
+K. FULL ENHANCED CAUSAL MODEL,71,0.5061,0.7117,0.2567,0.4666
