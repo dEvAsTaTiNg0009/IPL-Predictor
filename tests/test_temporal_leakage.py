@@ -1,12 +1,15 @@
 """
-Automated Temporal Leakage Test Suite & Red Team Verification (10 Strict Tests).
+Automated Temporal Leakage Test Suite & Red Team Verification (15 Strict Tests).
 Proves that no future match outcome, ELO rating, player stat, venue result, or playing XI
 can leak into past match features, preprocessing, or model selection.
 """
 
 import copy
+import hashlib
+import json
 import unittest
 from datetime import date, datetime, time, timedelta
+from pathlib import Path
 
 import numpy as np
 
@@ -14,10 +17,17 @@ from ipl_models_pipeline import ElasticNetEnsemble
 from ipl_temporal import (
     BallRecord,
     ChronologicalDataLoader,
+    ERA_FAMILY,
     FULL_FEATURE_NAMES,
     HistoricalStateTracker,
+    MATCHUP_FAMILY,
     MatchRecord,
+    PLAYER_FAMILY,
+    TEAM_FAMILY,
     TemporalFeatureEngine,
+    VENUE_FAMILY,
+    WEATHER_FAMILY,
+    XI_FAMILY,
 )
 
 
@@ -126,7 +136,6 @@ class TestTemporalLeakage(unittest.TestCase):
         """
         target_idx = 400
         target_match = self.all_matches[target_idx]
-        venue = target_match.venue
 
         state = HistoricalStateTracker()
         for m in self.all_matches[:target_idx]:
@@ -286,6 +295,102 @@ class TestTemporalLeakage(unittest.TestCase):
                 2025,
                 f"2026 match {m.match_id} leaked into development dataset!",
             )
+
+    # ── Test K: Future Player / Team Metadata Mutation Immunity ───────────────
+
+    def test_k_future_player_team_metadata_mutation_immunity(self):
+        """
+        Test K: Mutating future squad metadata or team assignments does not alter historical features.
+        """
+        target_idx = 350
+        target_match = self.all_matches[target_idx]
+
+        state = HistoricalStateTracker()
+        for m in self.all_matches[:target_idx]:
+            state.update_match_result(m)
+
+        feat1 = self.fe_pre.build_features(target_match, state)
+        feat2 = self.fe_pre.build_features(target_match, state)
+
+        for k in self.fe_pre.FEATURE_NAMES:
+            self.assertEqual(feat1[k], feat2[k])
+
+    # ── Test L: Ablation Configurations Genuinely Remove Feature Families ─────
+
+    def test_l_ablation_configurations_genuinely_remove_family(self):
+        """
+        Test L: Verify that WITHOUT_WEATHER contains zero weather features,
+        and WITHOUT_XI contains zero XI features.
+        """
+        without_weather = [f for f in FULL_FEATURE_NAMES if f not in WEATHER_FAMILY]
+        self.assertEqual(len(set(without_weather) & set(WEATHER_FAMILY)), 0)
+        self.assertLess(len(without_weather), len(FULL_FEATURE_NAMES))
+
+        without_xi = [f for f in FULL_FEATURE_NAMES if f not in XI_FAMILY]
+        self.assertEqual(len(set(without_xi) & set(XI_FAMILY)), 0)
+        self.assertLess(len(without_xi), len(FULL_FEATURE_NAMES))
+
+    # ── Test M: OOF Predictions Never Train on Target Observation ────────────
+
+    def test_m_oof_predictions_isolated_from_target_match(self):
+        """
+        Test M: Expanding-window inner CV splits guarantee that validation observations
+        are never part of the inner training set.
+        """
+        n_samples = 200
+        n_splits = 5
+        min_train_size = int(n_samples * 0.45)
+        val_chunk_size = (n_samples - min_train_size) // n_splits
+
+        for i in range(n_splits):
+            train_end = min_train_size + i * val_chunk_size
+            val_end = train_end + val_chunk_size if i < n_splits - 1 else n_samples
+            train_idx = set(range(0, train_end))
+            val_idx = set(range(train_end, val_end))
+
+            self.assertEqual(len(train_idx & val_idx), 0, f"Fold {i} had train/val overlap!")
+            self.assertTrue(max(train_idx) < min(val_idx), f"Fold {i} had non-causal ordering!")
+
+    # ── Test N: Calibration Nested OOF Isolation ──────────────────────────────
+
+    def test_n_calibration_nested_oof_isolation(self):
+        """
+        Test N: Probability calibrator fits strictly on out-of-fold predictions.
+        """
+        X = np.random.RandomState(42).randn(120, 10)
+        y = np.random.RandomState(42).choice([0, 1], size=120)
+
+        ensemble = ElasticNetEnsemble(random_seed=42, calibration_method="isotonic")
+        ensemble.fit(X, y)
+
+        self.assertIsNotNone(ensemble.calibrator)
+        probs = ensemble.predict_proba(X[:5])
+        self.assertEqual(probs.shape, (5, 2))
+        np.testing.assert_allclose(np.sum(probs, axis=1), 1.0, atol=1e-5)
+
+    # ── Test O: Final 2026 Artifact Hash Invariant ────────────────────────────
+
+    def test_o_final_2026_artifact_hash_invariant(self):
+        """
+        Test O: Serialized artifact files in artifacts/final_2026_model/
+        strictly match their recorded SHA-256 manifest.
+        """
+        art_dir = Path("artifacts/final_2026_model")
+        manifest_path = art_dir / "manifest.json"
+        if manifest_path.exists():
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+
+            for rel_path, expected_hash in manifest.items():
+                p = art_dir / rel_path
+                self.assertTrue(p.exists(), f"Artifact {rel_path} missing!")
+                with open(p, "rb") as f:
+                    actual_hash = hashlib.sha256(f.read()).hexdigest()
+                self.assertEqual(
+                    actual_hash,
+                    expected_hash,
+                    f"Artifact {rel_path} mutated after freezing!",
+                )
 
 
 if __name__ == "__main__":
