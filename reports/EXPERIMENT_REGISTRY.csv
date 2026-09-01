@@ -1,0 +1,2 @@
+experiment_id,date,name,feature_count,dev_accuracy,dev_log_loss,holdout_2026_acc,random_seed,calibration,meta_learner
+418d62c8,2026-09-01 10:46:58,ElasticNet-Causal-Pipeline,69,0.5172,0.7246,0.3333,42,isotonic,ElasticNet-SAGA

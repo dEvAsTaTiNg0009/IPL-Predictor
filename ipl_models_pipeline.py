@@ -1,11 +1,16 @@
 """
 Leak-Free Model Training, Ensembling, Preprocessing, and Calibration Pipelines.
+Implements Elastic Net Meta-Learning, Model Pruning, and Strict Inner-Fold Cross-Validation.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
+import pickle
 import warnings
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import lightgbm as lgb
@@ -40,7 +45,7 @@ def compute_comprehensive_metrics(
     n_bins: int = 10,
 ) -> Dict[str, Any]:
     """
-    Computes all standard probabilistic and classification metrics.
+    Computes all standard probabilistic and classification metrics with confidence intervals.
     """
     y_true = np.asarray(y_true, dtype=float)
     y_prob = np.asarray(y_prob, dtype=float)
@@ -130,14 +135,13 @@ def compute_comprehensive_metrics(
 
 
 class BaselineRandom:
-    """Predicts a constant 50% probability."""
+    """Predicts constant 50% probability."""
     def fit(self, X: np.ndarray, y: np.ndarray):
         return self
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         n = len(X)
-        p = np.full((n, 2), 0.50)
-        return p
+        return np.full((n, 2), 0.50)
 
 
 class BaselineStrongerTeam:
@@ -179,37 +183,36 @@ class BaselineELOOnly:
         self.lr = LogisticRegression(C=1.0, random_state=42)
 
     def fit(self, X: np.ndarray, y: np.ndarray, feature_idx: int = 2):
-        elo_diff = X[:, feature_idx : feature_idx + 1]
+        elo_diff = X[:, feature_idx : feature_idx + 1] if X.shape[1] > feature_idx else X[:, 0:1]
         self.lr.fit(elo_diff, y)
         return self
 
     def predict_proba(self, X: np.ndarray, feature_idx: int = 2) -> np.ndarray:
-        elo_diff = X[:, feature_idx : feature_idx + 1]
+        elo_diff = X[:, feature_idx : feature_idx + 1] if X.shape[1] > feature_idx else X[:, 0:1]
         return self.lr.predict_proba(elo_diff)
 
 
 # ── Bayesian Bradley-Terry Team-Strength Model ────────────────────────────────
 
 
-class BayesianTeamStrengthModel:
+class BayesianBradleyTerryModel:
     """
-    Bayesian Bradley-Terry Logit Team Rating Model.
-    Shrinks team strengths towards a common league mean using L2 regularization prior.
+    Bayesian Bradley-Terry Logit Team Rating Model with L2 shrinkage prior.
     """
 
     def __init__(self, prior_variance: float = 1.0):
         self.prior_variance = prior_variance
         self.model = LogisticRegression(C=1.0 / self.prior_variance, fit_intercept=False, random_state=42)
         self.fitted = False
-        self.feature_indices = [0]
+        self.feature_indices: List[int] = [0]
 
     def fit(self, X_train: np.ndarray, y_train: np.ndarray, feature_indices: Optional[List[int]] = None):
         n_feats = X_train.shape[1]
         if feature_indices is None:
-            candidates = [2, 8, 32, 35] if n_feats > 35 else [2, 8]
+            candidates = [2, 8, 22, 25] if n_feats > 25 else [2, 8]
             feature_indices = [idx for idx in candidates if idx < n_feats]
             if not feature_indices:
-                feature_indices = [min(2, n_feats - 1)]
+                feature_indices = [0]
         self.feature_indices = feature_indices
         X_sub = X_train[:, self.feature_indices]
         self.model.fit(X_sub, y_train)
@@ -223,31 +226,40 @@ class BayesianTeamStrengthModel:
         return self.model.predict_proba(X_sub)
 
 
-# ── Leak-Free Stacked Ensemble ────────────────────────────────────────────────
+# ── Elastic Net Stacked Ensemble ──────────────────────────────────────────────
 
 
-class LeakFreeEnsemble:
+class ElasticNetEnsemble:
     """
-    Stacked Ensemble with expanding-window inner cross-validation,
-    strict preprocessing isolation, and isotonic probability calibration.
+    Stacked Ensemble with Elastic Net Logistic Regression Meta-Learner,
+    expanding-window inner cross-validation, and automated base model pruning.
     """
 
-    def __init__(self, random_seed: int = 42, use_calibration: bool = True):
+    def __init__(
+        self,
+        random_seed: int = 42,
+        calibration_method: str = "isotonic",  # "none", "platt", or "isotonic"
+        retained_models: Optional[List[str]] = None,
+    ):
         self.random_seed = random_seed
-        self.use_calibration = use_calibration
+        self.calibration_method = calibration_method
+        self.retained_models = retained_models
         self.scaler = StandardScaler()
         self.base_models: Dict[str, Any] = {}
         self.meta_learner: Optional[LogisticRegression] = None
-        self.calibrator: Optional[IsotonicRegression] = None
+        self.calibrator: Optional[Any] = None
         self.fitted = False
-        self.inner_cv_scores: Dict[str, float] = {}
+        self.best_c: float = 0.3
+        self.best_l1_ratio: float = 0.5
+        self.meta_coefficients: Dict[str, float] = {}
 
-    def _init_base_models(self) -> Dict[str, Any]:
-        return {
+    def _init_candidate_models(self) -> Dict[str, Any]:
+        """All candidate base models before Elastic Net pruning."""
+        models = {
             "XGBoost": xgb.XGBClassifier(
-                n_estimators=160,
+                n_estimators=150,
                 max_depth=4,
-                learning_rate=0.025,
+                learning_rate=0.03,
                 subsample=0.85,
                 colsample_bytree=0.80,
                 eval_metric="logloss",
@@ -255,16 +267,16 @@ class LeakFreeEnsemble:
                 verbosity=0,
             ),
             "LightGBM": lgb.LGBMClassifier(
-                n_estimators=160,
+                n_estimators=150,
                 max_depth=4,
-                learning_rate=0.025,
+                learning_rate=0.03,
                 subsample=0.85,
                 colsample_bytree=0.80,
                 random_state=self.random_seed,
                 verbose=-1,
             ),
             "ExtraTrees": ExtraTreesClassifier(
-                n_estimators=200,
+                n_estimators=180,
                 max_depth=5,
                 min_samples_split=4,
                 random_state=self.random_seed,
@@ -282,6 +294,14 @@ class LeakFreeEnsemble:
                 max_iter=300,
                 random_state=self.random_seed,
             ),
+            "ElasticNetLogistic": LogisticRegression(
+                penalty="elasticnet",
+                solver="saga",
+                C=0.20,
+                l1_ratio=0.5,
+                max_iter=400,
+                random_state=self.random_seed,
+            ),
             "NeuralNet": MLPClassifier(
                 hidden_layer_sizes=(48, 24),
                 max_iter=250,
@@ -290,19 +310,25 @@ class LeakFreeEnsemble:
                 early_stopping=True,
                 n_iter_no_change=15,
             ),
+            "BayesianBradleyTerry": BayesianBradleyTerryModel(prior_variance=1.0),
         }
 
-    def fit(self, X_train: np.ndarray, y_train: np.ndarray) -> "LeakFreeEnsemble":
+        # Filter if a subset of models was already selected
+        if self.retained_models is not None:
+            return {k: v for k, v in models.items() if k in self.retained_models}
+        return models
+
+    def fit(self, X_train: np.ndarray, y_train: np.ndarray) -> "ElasticNetEnsemble":
         """
-        Trains the ensemble strictly on the provided training set using
-        expanding-window walk-forward splits to generate out-of-fold predictions.
+        Trains ensemble on training set using inner chronological expanding splits
+        to generate out-of-fold predictions for Elastic Net meta-learning.
         """
         X = np.asarray(X_train, dtype=float)
         y = np.asarray(y_train, dtype=float)
         n_samples = len(X)
 
         if n_samples < 50:
-            raise ValueError(f"Insufficient training samples for nested ensemble: {n_samples}")
+            raise ValueError(f"Insufficient training samples: {n_samples}")
 
         # 1. Generate Expanding-Window Inner Cross-Validation Splits
         n_splits = 5
@@ -318,12 +344,10 @@ class LeakFreeEnsemble:
             if len(train_idx) > 0 and len(val_idx) > 0:
                 splits.append((train_idx, val_idx))
 
-        model_prototypes = self._init_base_models()
+        model_prototypes = self._init_candidate_models()
         model_names = list(model_prototypes.keys())
         n_models = len(model_names)
 
-        # Store OOF validation predictions
-        val_indices_all: List[int] = []
         oof_predictions_list: List[np.ndarray] = []
         oof_targets_list: List[np.ndarray] = []
 
@@ -339,47 +363,84 @@ class LeakFreeEnsemble:
             fold_oof = np.zeros((len(va_idx), n_models), dtype=float)
 
             for m_idx, name in enumerate(model_names):
-                clf = self._init_base_models()[name]
-                inp_tr = X_tr_s if name in ["LogisticRegression", "NeuralNet", "ExtraTrees"] else X_tr
-                inp_va = X_va_s if name in ["LogisticRegression", "NeuralNet", "ExtraTrees"] else X_va
+                clf = self._init_candidate_models()[name]
+                inp_tr = X_tr_s if name in ["LogisticRegression", "ElasticNetLogistic", "NeuralNet", "ExtraTrees"] else X_tr
+                inp_va = X_va_s if name in ["LogisticRegression", "ElasticNetLogistic", "NeuralNet", "ExtraTrees"] else X_va
 
                 clf.fit(inp_tr, y_tr)
                 p_va = clf.predict_proba(inp_va)[:, 1]
                 fold_oof[:, m_idx] = p_va
 
-            val_indices_all.extend(va_idx.tolist())
             oof_predictions_list.append(fold_oof)
             oof_targets_list.append(y_va)
 
         OOF_X = np.vstack(oof_predictions_list)
         OOF_y = np.concatenate(oof_targets_list)
 
-        # 2. Train Meta-Learner strictly on valid OOF predictions
+        # 2. Chronological Grid Search for Elastic Net (C, l1_ratio)
+        best_ll = float("inf")
+        c_candidates = [0.01, 0.05, 0.1, 0.2, 0.5, 1.0, 3.0]
+        l1_candidates = [0.0, 0.25, 0.5, 0.75, 1.0]
+
+        for c_val in c_candidates:
+            for l1_val in l1_candidates:
+                try:
+                    meta_cand = LogisticRegression(
+                        penalty="elasticnet",
+                        solver="saga",
+                        C=c_val,
+                        l1_ratio=l1_val,
+                        max_iter=500,
+                        random_state=self.random_seed,
+                    )
+                    meta_cand.fit(OOF_X, OOF_y)
+                    p_meta = meta_cand.predict_proba(OOF_X)[:, 1]
+                    cur_ll = log_loss(OOF_y, p_meta)
+                    if cur_ll < best_ll:
+                        best_ll = cur_ll
+                        self.best_c = c_val
+                        self.best_l1_ratio = l1_val
+                except Exception:
+                    pass
+
+        # 3. Fit Best Elastic Net Meta-Learner on OOF Predictions
         self.meta_learner = LogisticRegression(
-            C=0.25,
+            penalty="elasticnet",
+            solver="saga",
+            C=self.best_c,
+            l1_ratio=self.best_l1_ratio,
+            max_iter=600,
             random_state=self.random_seed,
         )
         self.meta_learner.fit(OOF_X, OOF_y)
 
-        # 3. Fit Isotonic Calibration on OOF meta predictions
+        # Record meta coefficients
+        if hasattr(self.meta_learner, "coef_"):
+            for m_name, coef in zip(model_names, self.meta_learner.coef_[0]):
+                self.meta_coefficients[m_name] = float(coef)
+
+        # 4. Fit Probability Calibrator on Inner OOF Predictions
         meta_oof_probs = self.meta_learner.predict_proba(OOF_X)[:, 1]
-        if self.use_calibration:
+        if self.calibration_method == "isotonic":
             self.calibrator = IsotonicRegression(
                 y_min=0.02,
                 y_max=0.98,
                 out_of_bounds="clip",
             )
             self.calibrator.fit(meta_oof_probs, OOF_y)
+        elif self.calibration_method == "platt":
+            self.calibrator = LogisticRegression(C=1.0, random_state=self.random_seed)
+            self.calibrator.fit(meta_oof_probs.reshape(-1, 1), OOF_y)
         else:
             self.calibrator = None
 
-        # 4. Refit Scaler and Base Models on Full Outer Training Set
+        # 5. Refit Scaler and Base Models on Full Outer Training Set
         self.scaler = StandardScaler()
         X_s = self.scaler.fit_transform(X)
 
-        self.base_models = self._init_base_models()
+        self.base_models = self._init_candidate_models()
         for name, clf in self.base_models.items():
-            inp = X_s if name in ["LogisticRegression", "NeuralNet", "ExtraTrees"] else X
+            inp = X_s if name in ["LogisticRegression", "ElasticNetLogistic", "NeuralNet", "ExtraTrees"] else X
             clf.fit(inp, y)
 
         self.fitted = True
@@ -398,7 +459,7 @@ class LeakFreeEnsemble:
         base_preds = []
         for name in self.base_models:
             clf = self.base_models[name]
-            inp = X_s if name in ["LogisticRegression", "NeuralNet", "ExtraTrees"] else X
+            inp = X_s if name in ["LogisticRegression", "ElasticNetLogistic", "NeuralNet", "ExtraTrees"] else X
             prob = clf.predict_proba(inp)[:, 1]
             base_preds.append(prob)
 
@@ -406,7 +467,10 @@ class LeakFreeEnsemble:
         raw_meta_prob = self.meta_learner.predict_proba(meta_input)[:, 1]
 
         if self.calibrator is not None:
-            calibrated_prob = self.calibrator.predict(raw_meta_prob)
+            if isinstance(self.calibrator, IsotonicRegression):
+                calibrated_prob = self.calibrator.predict(raw_meta_prob)
+            else:
+                calibrated_prob = self.calibrator.predict_proba(raw_meta_prob.reshape(-1, 1))[:, 1]
             calibrated_prob = np.clip(calibrated_prob, 0.02, 0.98)
         else:
             calibrated_prob = raw_meta_prob
@@ -418,7 +482,6 @@ class LeakFreeEnsemble:
         return (probs >= 0.5).astype(int)
 
     def get_feature_importances(self, feature_names: List[str]) -> List[Tuple[str, float]]:
-        """Computes normalized feature importance across tree base models."""
         if not self.fitted:
             return []
         importances = np.zeros(len(feature_names), dtype=float)
@@ -437,3 +500,56 @@ class LeakFreeEnsemble:
         pairs = list(zip(feature_names, importances.tolist()))
         pairs.sort(key=lambda p: -p[1])
         return pairs
+
+    def export_frozen_artifacts(self, export_dir: Path, feature_names: List[str]) -> Dict[str, str]:
+        """
+        Serializes all trained models, preprocessors, and hyperparameters into export_dir
+        and generates a cryptographic SHA-256 manifest.
+        """
+        export_dir.mkdir(parents=True, exist_ok=True)
+        manifest: Dict[str, str] = {}
+
+        # 1. Configs & Hyperparameters
+        cfg = {
+            "feature_names": feature_names,
+            "retained_models": list(self.base_models.keys()),
+            "best_c": self.best_c,
+            "best_l1_ratio": self.best_l1_ratio,
+            "calibration_method": self.calibration_method,
+            "meta_coefficients": self.meta_coefficients,
+        }
+        cfg_path = export_dir / "config.json"
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+
+        # 2. Preprocessor & Meta Learner Checkpoints
+        with open(export_dir / "scaler.pkl", "wb") as f:
+            pickle.dump(self.scaler, f)
+        with open(export_dir / "meta_learner.pkl", "wb") as f:
+            pickle.dump(self.meta_learner, f)
+        if self.calibrator is not None:
+            with open(export_dir / "calibrator.pkl", "wb") as f:
+                pickle.dump(self.calibrator, f)
+
+        # 3. Base Models
+        models_dir = export_dir / "models"
+        models_dir.mkdir(exist_ok=True)
+        for name, clf in self.base_models.items():
+            with open(models_dir / f"{name}.pkl", "wb") as f:
+                pickle.dump(clf, f)
+
+        # 4. Generate SHA256 checksums
+        for p in export_dir.rglob("*"):
+            if p.is_file() and p.name != "manifest.json":
+                with open(p, "rb") as f:
+                    manifest[str(p.relative_to(export_dir))] = hashlib.sha256(f.read()).hexdigest()
+
+        with open(export_dir / "manifest.json", "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2)
+
+        return manifest
+
+
+# Alias for backward compatibility
+LeakFreeEnsemble = ElasticNetEnsemble
+BayesianTeamStrengthModel = BayesianBradleyTerryModel

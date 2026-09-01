@@ -1,0 +1,9 @@
+model,elastic_net_coefficient,validation_contribution,status
+XGBoost,0.0,Neutral,PRUNED
+LightGBM,0.0,Neutral,PRUNED
+ExtraTrees,0.0,Neutral,PRUNED
+GradientBoosting,0.2524,Positive,RETAINED
+LogisticRegression,-1.5535,Neutral,RETAINED
+ElasticNetLogistic,0.0,Neutral,PRUNED
+NeuralNet,0.4775,Positive,RETAINED
+BayesianBradleyTerry,2.3829,Positive,RETAINED

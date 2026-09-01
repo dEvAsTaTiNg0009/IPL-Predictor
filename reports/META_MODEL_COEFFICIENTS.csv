@@ -1,0 +1,9 @@
+base_model,elastic_net_coefficient,absolute_coefficient,decision
+XGBoost,0.0,0.0,REMOVE
+LightGBM,0.0,0.0,REMOVE
+ExtraTrees,0.0,0.0,REMOVE
+GradientBoosting,0.2524,0.2524,KEEP
+LogisticRegression,-1.5535,1.5535,KEEP
+ElasticNetLogistic,0.0,0.0,REMOVE
+NeuralNet,0.4775,0.4775,KEEP
+BayesianBradleyTerry,2.3829,2.3829,KEEP
